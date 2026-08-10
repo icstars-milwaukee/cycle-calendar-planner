@@ -1,0 +1,1354 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cycle 21 Week Planner — Tech Foundations</title>
+<style>
+  :root {
+    --paper: #F7F5F1;
+    --surface: #FFFFFF;
+    --ink: #23241F;
+    --ink-soft: #6E6A60;
+    --line: #E2DED5;
+    --moss: #5B6B4F;
+    --moss-soft: #E8ECE3;
+    --tea: #A9722F;
+    --tea-soft: #F3E7D6;
+    --break-bg: #EDEAE3;
+    --slot-line: #B8B2A4;
+    --slot-ink: #857F71;
+    --ws-bg: #DDE6EE;
+    --ws-edge: #4A6B8A;
+    --danger: #B04A3A;
+    --danger-soft: #F4DDD8;
+    --shadow: 0 6px 18px rgba(35,36,31,0.18);
+    /* workshop categories */
+    --cat-leadership: #4A6B8A;      --cat-leadership-soft: #DDE6EE;
+    --cat-community: #6B5A8A;       --cat-community-soft: #E5E0EE;
+    --cat-self: #3E7A6E;            --cat-self-soft: #DCEAE6;
+    --cat-business: #96504B;        --cat-business-soft: #F1DFDC;
+    --shift-carl: #3F5E52; --shift-carl-soft: #D3E0D9;
+    --shift-mimi: #8A5A6B; --shift-mimi-soft: #EEDCE2;
+    --inperson: #6B5B3E; --inperson-soft: #EFE7D8;
+    --virtual: #3F5B7A;  --virtual-soft: #DEE7F0; --virtual-wash: rgba(63,91,122,0.055);
+    --wellness: #4E7C59; --wellness-soft: #DFEBE1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #1C1D19; --surface: #24251F; --ink: #ECEAE3; --ink-soft: #A29D90;
+      --line: #3A3B33; --moss: #9DB287; --moss-soft: #303827; --tea: #D9A05B;
+      --tea-soft: #3D2F1B; --break-bg: #2B2C25; --slot-line: #5C5D50; --slot-ink: #8C887A;
+      --ws-bg: #2C3844; --ws-edge: #7FA3C4; --danger: #E08070; --danger-soft: #4A2A24;
+      --shadow: 0 6px 18px rgba(0,0,0,0.5);
+      --cat-leadership: #7FA3C4;      --cat-leadership-soft: #2C3844;
+      --cat-community: #A594C9;       --cat-community-soft: #322D42;
+      --cat-self: #7FB5A8;            --cat-self-soft: #263732;
+      --cat-business: #CC8A82;        --cat-business-soft: #3E2B28;
+      --shift-carl: #86AE9E; --shift-carl-soft: #29382F;
+      --shift-mimi: #C79AA9; --shift-mimi-soft: #3A2A30;
+      --inperson: #D3BE93; --inperson-soft: #3A3223;
+      --virtual: #9BBBD9;  --virtual-soft: #26313C; --virtual-wash: rgba(155,187,217,0.07);
+      --wellness: #93C0A0; --wellness-soft: #26332A;
+    }
+  }
+  :root[data-theme="light"] {
+    --paper: #F7F5F1; --surface: #FFFFFF; --ink: #23241F; --ink-soft: #6E6A60;
+    --line: #E2DED5; --moss: #5B6B4F; --moss-soft: #E8ECE3; --tea: #A9722F;
+    --tea-soft: #F3E7D6; --break-bg: #EDEAE3; --slot-line: #B8B2A4; --slot-ink: #857F71;
+    --ws-bg: #DDE6EE; --ws-edge: #4A6B8A; --danger: #B04A3A; --danger-soft: #F4DDD8;
+    --shadow: 0 6px 18px rgba(35,36,31,0.18);
+    --cat-leadership: #4A6B8A;      --cat-leadership-soft: #DDE6EE;
+    --cat-community: #6B5A8A;       --cat-community-soft: #E5E0EE;
+    --cat-self: #3E7A6E;            --cat-self-soft: #DCEAE6;
+    --cat-business: #96504B;        --cat-business-soft: #F1DFDC;
+    --shift-carl: #3F5E52; --shift-carl-soft: #D3E0D9;
+    --shift-mimi: #8A5A6B; --shift-mimi-soft: #EEDCE2;
+    --inperson: #6B5B3E; --inperson-soft: #EFE7D8;
+    --virtual: #3F5B7A;  --virtual-soft: #DEE7F0; --virtual-wash: rgba(63,91,122,0.055);
+    --wellness: #4E7C59; --wellness-soft: #DFEBE1;
+  }
+  :root[data-theme="dark"] {
+    --paper: #1C1D19; --surface: #24251F; --ink: #ECEAE3; --ink-soft: #A29D90;
+    --line: #3A3B33; --moss: #9DB287; --moss-soft: #303827; --tea: #D9A05B;
+    --tea-soft: #3D2F1B; --break-bg: #2B2C25; --slot-line: #5C5D50; --slot-ink: #8C887A;
+    --ws-bg: #2C3844; --ws-edge: #7FA3C4; --danger: #E08070; --danger-soft: #4A2A24;
+    --shadow: 0 6px 18px rgba(0,0,0,0.5);
+    --cat-leadership: #7FA3C4;      --cat-leadership-soft: #2C3844;
+    --cat-community: #A594C9;       --cat-community-soft: #322D42;
+    --cat-self: #7FB5A8;            --cat-self-soft: #263732;
+    --cat-business: #CC8A82;        --cat-business-soft: #3E2B28;
+      --shift-carl: #86AE9E; --shift-carl-soft: #29382F;
+      --shift-mimi: #C79AA9; --shift-mimi-soft: #3A2A30;
+      --inperson: #D3BE93; --inperson-soft: #3A3223;
+      --virtual: #9BBBD9;  --virtual-soft: #26313C; --virtual-wash: rgba(155,187,217,0.07);
+      --wellness: #93C0A0; --wellness-soft: #26332A;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif; line-height: 1.45;
+  }
+  .wrap { max-width: 1360px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
+  .head-text { flex: 1 1 380px; }
+  .eyebrow {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--tea); font-weight: 600; margin: 0 0 6px;
+  }
+  h1 { font-size: clamp(22px, 3vw, 30px); font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; text-wrap: balance; }
+  .lede { color: var(--ink-soft); max-width: 66ch; margin: 0; font-size: 13.5px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .actions .ics-week { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-soft); }
+  .actions input[type="date"], .actions input[type="text"] {
+    font: inherit; font-size: 12px; padding: 6px 8px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--surface); color: var(--ink);
+  }
+  .actions .name-in { width: 190px; }
+  .actions .ext { font-size: 11.5px; color: var(--ink-soft); margin-left: -2px; }
+  .actions label.holds-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-soft); cursor: pointer; }
+  .ics-msg { flex-basis: 100%; font-size: 11.5px; color: var(--moss); min-height: 1.2em; }
+  .ics-msg.err { color: var(--danger); }
+  button {
+    font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    border-radius: 6px; padding: 8px 14px;
+  }
+  button:hover { border-color: var(--ink-soft); }
+  button:focus-visible { outline: 2px solid var(--ws-edge); outline-offset: 2px; }
+  button.primary { background: var(--moss); border-color: var(--moss); color: #fff; }
+  :root[data-theme="dark"] button.primary, [data-theme="dark"] button.primary { color: #1C1D19; }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 14px; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 9px 16px; }
+  .stat b { display: block; font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 10.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-soft); }
+  .stat.warn b { color: var(--danger); }
+  .stat .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+
+  /* ---- business holds ---- */
+  .holds {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    margin: 0 0 18px; font-size: 13px;
+  }
+  .holds summary {
+    cursor: pointer; padding: 12px 16px; font-size: 11px; letter-spacing: 0.13em;
+    text-transform: uppercase; color: var(--ink-soft); font-weight: 600; user-select: none;
+  }
+  .holds summary:focus-visible { outline: 2px solid var(--ws-edge); outline-offset: -2px; }
+  .holds .holds-body { padding: 0 16px 14px; overflow-x: auto; }
+  .holds table { border-collapse: collapse; min-width: 460px; }
+  .holds th, .holds td { padding: 4px 22px 4px 0; text-align: left; font-size: 12.5px; white-space: nowrap; }
+  .holds th { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); font-weight: 600; border-bottom: 1px solid var(--line); }
+  .holds td.n { font-variant-numeric: tabular-nums; }
+  .holds tr.total td { border-top: 1px solid var(--line); font-weight: 650; }
+  .holds tr.open td { color: var(--moss); font-weight: 650; }
+  .holds .hold-note { font-size: 11.5px; color: var(--ink-soft); margin: 10px 0 0; max-width: 72ch; }
+  .holds .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 7px; }
+
+  .layout { display: flex; gap: 18px; align-items: flex-start; }
+
+  /* ---- shelf ---- */
+  .shelf {
+    flex: 0 0 250px; position: sticky; top: 16px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px; max-height: calc(100vh - 40px); overflow-y: auto;
+  }
+  .shelf h2 { font-size: 11px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-soft); margin: 0 0 4px; }
+  .shelf .hint { font-size: 11.5px; color: var(--ink-soft); margin: 0 0 12px; }
+  .card {
+    border: 1.5px dashed var(--slot-line); border-radius: 6px; padding: 7px 9px 7px 11px;
+    margin-bottom: 7px; cursor: grab; background: var(--paper);
+    touch-action: none; user-select: none; position: relative;
+  }
+  .card::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    border-radius: 6px 0 0 6px; background: var(--edge, var(--slot-line));
+  }
+  .card:hover { border-color: var(--ws-edge); }
+  .card .ct { font-size: 12px; font-weight: 600; line-height: 1.3; }
+  .card .cm { font-size: 10.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; margin-top: 3px; display: flex; align-items: center; gap: 6px; }
+  .card .cm .chip { margin-right: 0; flex: 0 1 auto; }
+  .card .cm .mn { flex: none; }
+  .chip {
+    display: inline-block; font-size: 9px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 1px 6px; border-radius: 999px;
+    background: var(--break-bg); color: var(--ink-soft); margin-right: 6px;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  }
+  .shelf-empty { font-size: 11.5px; color: var(--ink-soft); font-style: italic; }
+  .addform { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .addform label { display: block; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 4px; }
+  .addform input, .addform select {
+    font: inherit; font-size: 12.5px; width: 100%; padding: 6px 8px; margin-bottom: 8px;
+    border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink);
+  }
+  .addform button { width: 100%; }
+
+  /* ---- category manager ---- */
+  .cats { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .cats h2 { margin-bottom: 8px; }
+  .catrow {
+    display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 12.5px;
+  }
+  .catrow .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .catrow .mins { font-size: 10.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; flex: none; }
+  .catrow .sw2 { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .catrow input[type="color"] {
+    width: 22px; height: 20px; padding: 0; flex: none; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 4px; background: none; margin: 0;
+  }
+  .catrow .del {
+    flex: none; border: none; background: none; padding: 0 2px; font-size: 14px;
+    line-height: 1; color: var(--ink-soft); cursor: pointer; border-radius: 3px;
+  }
+  .catrow .del:hover { color: var(--danger); }
+  .catrow .lock { flex: none; font-size: 10px; color: var(--ink-soft); letter-spacing: 0.06em; }
+  .catadd { display: flex; gap: 6px; margin-top: 10px; }
+  .catadd input[type="text"] { flex: 1 1 auto; margin-bottom: 0; }
+  .catadd input[type="color"] {
+    flex: none; width: 34px; height: 31px; padding: 0; margin-bottom: 0;
+    border: 1px solid var(--line); border-radius: 5px; background: none; cursor: pointer;
+  }
+  .cats .addform-note { font-size: 11px; color: var(--ink-soft); margin: 8px 0 0; }
+
+  /* ---- grid ---- */
+  .cal-scroll { flex: 1 1 auto; overflow-x: auto; }
+  .cal {
+    --gutter: 20px;
+    display: grid; grid-template-columns: 54px repeat(5, minmax(148px, 1fr));
+    gap: 0 8px; min-width: 860px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 12px 16px;
+  }
+  .day-head {
+    text-align: center; padding: 4px 0 10px; border-bottom: 1px solid var(--line); margin-bottom: 8px;
+  }
+  .day-head b { display: block; font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); }
+  .day-head span { font-size: 10.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .day-head span.over { color: var(--danger); font-weight: 600; }
+  .day-head .mode {
+    display: inline-block; font-size: 8.5px; font-weight: 700; letter-spacing: 0.09em;
+    text-transform: uppercase; padding: 1px 7px; border-radius: 999px; margin: 3px 0 2px;
+  }
+  .day-head .mode.inperson { background: var(--inperson-soft); color: var(--inperson); }
+  .day-head .mode.virtual  { background: var(--virtual-soft);  color: var(--virtual); }
+  .corner { border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+
+  .rail { position: relative; font-size: 10.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; text-align: right; padding-right: 9px; }
+  .rail div { position: absolute; right: 9px; transform: translateY(-6px); }
+
+  .day { position: relative; border-radius: 4px; }
+  .day.virtual { background: var(--virtual-wash); box-shadow: inset 0 0 0 1px var(--virtual-soft); }
+
+  /* ---- work-hour shading (left gutter of each day) ---- */
+  .shift {
+    position: absolute; width: 7px; border-radius: 4px;
+    pointer-events: none; z-index: 1;
+  }
+  .shift.carl { left: 2px;  background: var(--shift-carl-soft); border: 1px solid var(--shift-carl); }
+  .shift.mimi { left: 11px; background: var(--shift-mimi-soft); border: 1px solid var(--shift-mimi); }
+  .day::before {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: var(--gutter);
+    background: repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent 64px);
+    opacity: 0.55; pointer-events: none;
+  }
+  .day.drop-ok { outline: 2px dashed var(--ws-edge); outline-offset: 2px; }
+
+  .blk {
+    position: absolute; left: var(--gutter); right: 0; border-radius: 5px;
+    padding: 3px 8px; font-size: 11px; line-height: 1.25; overflow: hidden;
+  }
+  .blk .t { font-weight: 600; display: block; font-size: 11px; }
+  .blk .d { font-size: 10px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+  .blk .cx {
+    display: block; font-size: 9px; font-weight: 700; letter-spacing: 0.07em;
+    text-transform: uppercase; margin-top: 1px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .blk.ritual { background: var(--moss-soft); border-left: 3px solid var(--moss); }
+  .blk.tea    { background: var(--tea-soft);  border-left: 3px solid var(--tea); }
+  .blk.brk {
+    background: var(--break-bg); color: var(--ink-soft); font-size: 10px;
+    display: flex; align-items: center; padding: 0 8px;
+  }
+  .blk.wellness { background: var(--wellness-soft); border-left: 3px solid var(--wellness); }
+  .blk.blocked {
+    background: repeating-linear-gradient(
+      -45deg, var(--break-bg) 0, var(--break-bg) 7px, transparent 7px, transparent 14px);
+    border: 1px dashed var(--slot-line); color: var(--slot-ink); padding-top: 6px;
+  }
+  .blk.blocked .t { font-weight: 700; letter-spacing: 0.04em; }
+  .blk.blocked .d { opacity: 1; }
+
+  .blk.ws {
+    background: var(--ws-bg); border-left: 3px solid var(--ws-edge);
+    cursor: grab; touch-action: none; user-select: none; z-index: 3;
+  }
+  .blk.ws:hover { box-shadow: 0 2px 8px rgba(35,36,31,0.18); }
+  .blk.ws.conflict { background: var(--danger-soft); border-left-color: var(--danger); }
+  .blk.ws .x {
+    position: absolute; top: 2px; right: 3px; width: 18px; height: 18px;
+    border: none; background: none; padding: 0; font-size: 13px; line-height: 18px;
+    color: var(--ink-soft); cursor: pointer; border-radius: 3px;
+  }
+  .blk.ws .x:hover { color: var(--danger); background: rgba(0,0,0,0.06); }
+  .blk.ws .rz {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 7px;
+    cursor: ns-resize; touch-action: none;
+  }
+  .blk.ws .rz::after {
+    content: ""; position: absolute; left: 50%; bottom: 2px; width: 22px; height: 2px;
+    transform: translateX(-50%); border-radius: 2px; background: var(--ws-edge); opacity: 0.5;
+  }
+
+  .preview {
+    position: absolute; left: var(--gutter); right: 0; border-radius: 5px; z-index: 2;
+    background: var(--ws-bg); opacity: 0.55; border: 1.5px dashed var(--ws-edge);
+    pointer-events: none;
+  }
+  .preview.bad { background: var(--danger-soft); border-color: var(--danger); opacity: 0.7; }
+  .drag-ghost {
+    position: fixed; z-index: 99; pointer-events: none; width: 170px;
+    background: var(--ws-bg); border-left: 3px solid var(--ws-edge); border-radius: 5px;
+    padding: 5px 9px; font-size: 11.5px; font-weight: 600; box-shadow: var(--shadow);
+    opacity: 0.92;
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; font-size: 11.5px; color: var(--ink-soft); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .swatch.ritual { background: var(--moss-soft); border: 1px solid var(--moss); }
+  .swatch.tea { background: var(--tea-soft); border: 1px solid var(--tea); }
+  .swatch.brk { background: var(--break-bg); border: 1px solid var(--line); }
+  .swatch.cf { background: var(--danger-soft); border: 1px solid var(--danger); }
+  .swatch.sh-carl { background: var(--shift-carl-soft); border: 1px solid var(--shift-carl); }
+  .swatch.sh-mimi { background: var(--shift-mimi-soft); border: 1px solid var(--shift-mimi); }
+  .swatch.md-inperson { background: var(--inperson-soft); border: 1px solid var(--inperson); }
+  .swatch.md-virtual  { background: var(--virtual-soft);  border: 1px solid var(--virtual); }
+  .swatch.wellness { background: var(--wellness-soft); border: 1px solid var(--wellness); }
+  .swatch.blocked {
+    background: repeating-linear-gradient(
+      -45deg, var(--break-bg) 0, var(--break-bg) 3px, transparent 3px, transparent 6px);
+    border: 1px dashed var(--slot-line);
+  }
+
+  @media (max-width: 900px) {
+    .layout { flex-direction: column; }
+    .shelf { position: static; flex: none; width: 100%; max-height: none; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .blk.ws { transition: box-shadow 120ms ease; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="head-text">
+      <p class="eyebrow">Tech Foundations · Cycle 21 Week Planner</p>
+      <h1>Drag workshops onto the fixed skeleton</h1>
+      <p class="lede">Drag a card from the shelf onto any day. Drag placed blocks to move them, pull the bottom
+      edge to resize, hit × (or drag a block back to the shelf) to send it back. Red means it collides with the
+      skeleton or another workshop. Colors are workshop categories. Your layout autosaves in this browser.
+      When the week looks right, pick the Monday it starts and export an .ics file straight into Outlook.
+      The two shaded bars down the left of each day mark who is on shift — see the legend below the grid.
+      Wednesday and Friday are tinted because they run virtual. Exporting writes an .ics you can re-import later
+      with <b>Import .ics</b> to pick the board back up.</p>
+    </div>
+    <div class="actions">
+      <span class="ics-week">
+        Week of
+        <input type="date" id="icsDate" aria-label="Monday the week starts" />
+      </span>
+      <span class="ics-week">
+        Save as
+        <input type="text" id="icsName" class="name-in" aria-label="Export file name"
+               maxlength="70" placeholder="cycle21-week" />
+        <span class="ext">.ics</span>
+      </span>
+      <label class="holds-opt"><input type="checkbox" id="icsHolds" checked /> include holds</label>
+      <button id="icsBtn" class="primary" type="button">Export to Outlook (.ics)</button>
+      <button id="importBtn" type="button">Import .ics</button>
+      <input type="file" id="icsFile" accept=".ics,text/calendar,text/plain" hidden />
+      <button id="exportBtn" type="button">Copy schedule</button>
+      <button id="resetBtn" type="button">Reset</button>
+      <span id="icsMsg" class="ics-msg" role="status"></span>
+    </div>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <details class="holds" open>
+    <summary>Business holds — fixed weekly minimums</summary>
+    <div class="holds-body">
+      <table>
+        <thead>
+          <tr><th>Hold</th><th>When</th><th>Duration</th><th>Per week</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="sw" style="background:var(--moss)"></span>All Skate (morning ritual)</td><td class="n">8:30 – 9:00 AM, daily</td><td class="n">30 min</td><td class="n">150 min</td></tr>
+          <tr><td><span class="sw" style="background:var(--slot-line)"></span>Lunch</td><td class="n">12:00 – 1:00 PM, daily</td><td class="n">60 min</td><td class="n">300 min</td></tr>
+          <tr><td><span class="sw" style="background:var(--tea)"></span>Tea service (prep + High Tea + debrief)</td><td class="n">3:30 – 5:30 PM, Mon/Tue/Thu/Fri</td><td class="n">120 min</td><td class="n">480 min</td></tr>
+          <tr><td><span class="sw" style="background:var(--wellness)"></span>Break</td><td class="n">5:30 – 6:00 PM, Mon/Tue/Thu/Fri</td><td class="n">30 min</td><td class="n">120 min</td></tr>
+          <tr><td><span class="sw" style="background:var(--wellness)"></span>Wellness Workshop</td><td class="n">1:00 – 2:00 PM, Wednesday</td><td class="n">60 min</td><td class="n">60 min</td></tr>
+          <tr><td><span class="sw" style="background:var(--slot-line)"></span>Out of cycle (Wellness Wednesday)</td><td class="n">2:00 PM – end of day, Wednesday</td><td class="n">315 min</td><td class="n">315 min</td></tr>
+          <tr class="total"><td>Total held</td><td class="n">—</td><td class="n">240 min · 465 min Wed</td><td class="n">1,425 min (23h 45m)</td></tr>
+          <tr class="open"><td>Open workshop time</td><td class="n">3 windows · 1 on Wed</td><td class="n">405 min · 180 min Wed</td><td class="n">1,800 min (30h)</td></tr>
+        </tbody>
+      </table>
+      <p class="hold-note"><b>Mon, Tue, Thu, Fri:</b> 9:00–12:00 (180m) · 1:00–3:30 (150m) · 6:00–7:15 (75m)
+      — 405 open minutes. <b>Wednesday:</b> 9:00–12:00 (180m) only — the Wellness Workshop runs 1:00–2:00
+      and the rest of the day is out of cycle, so the planner refuses any drop after 2:00 PM.
+      The only fixed break is 5:30–6:00 PM after Tea Debrief; for any other breathing room between
+      sessions, leave gaps when you place the cards.</p>
+    </div>
+  </details>
+
+  <div class="layout">
+    <aside class="shelf" id="shelf-zone">
+      <h2>Workshop shelf</h2>
+      <p class="hint">Each card is tagged with its category. Add workshops below, then drag them onto the week.</p>
+      <div id="shelf"></div>
+      <form class="addform" id="addform">
+        <label for="nw-name">Add a Cycle 21 workshop</label>
+        <input id="nw-name" type="text" placeholder="Workshop name" maxlength="60" />
+        <select id="nw-cat" aria-label="Category"></select>
+        <select id="nw-mins" aria-label="Duration">
+          <option value="30">30 min</option>
+          <option value="45">45 min</option>
+          <option value="60" selected>60 min</option>
+          <option value="75">75 min</option>
+          <option value="90">90 min</option>
+          <option value="120">120 min</option>
+        </select>
+        <button type="submit">Add to shelf</button>
+      </form>
+
+      <div class="cats">
+        <h2>Categories</h2>
+        <div id="catList"></div>
+        <form class="addform catform" id="catform">
+          <label for="nc-name">Add a category</label>
+          <div class="catadd">
+            <input id="nc-name" type="text" placeholder="Category name" maxlength="28" />
+            <input id="nc-color" type="color" value="#7A5C9E" aria-label="Category color" />
+          </div>
+          <button type="submit">Add category</button>
+          <p class="addform-note">Every category gets its own color, legend entry, and hours total in the stats bar.</p>
+        </form>
+      </div>
+    </aside>
+
+    <div class="cal-scroll">
+      <div class="cal" id="cal">
+        <div class="corner"></div>
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var DAY_START = 510;   // 8:30
+  var DAY_END = 1155;    // 19:15
+  var PX = 16 / 15;      // px per minute
+  var COL_H = (DAY_END - DAY_START) * PX;
+  var SNAP = 15;
+  var DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  // Monday, Tuesday, Thursday are in person; Wednesday and Friday are virtual.
+  var DAY_MODE = ["inperson", "inperson", "virtual", "inperson", "virtual"];
+  var MODE_LABEL = { inperson: "In person", virtual: "Virtual" };
+  var STORE_KEY = "tf-cycle21-plan-v1";
+
+  // days: which weekday columns a hold applies to (0 = Monday). Omit for all five.
+  var FIXED = [
+    { t: "All Skate",          s: 510,  e: 540,  k: "ritual",   ics: "Hold: Ritual" },
+    { t: "Lunch",              s: 720,  e: 780,  k: "brk",      ics: "Hold: Lunch" },
+    { t: "Wellness Workshop",  s: 780,  e: 840,  k: "wellness", days: [2], ics: "Hold: Wellness Wednesday" },
+    { t: "Out of cycle",       s: 840,  e: 1155, k: "blocked",  days: [2], ics: "Hold: Out of cycle" },
+    { t: "Tea Prep",           s: 930,  e: 960,  k: "tea",      days: [0, 1, 3, 4], ics: "Hold: Tea Service" },
+    { t: "High Tea",           s: 960,  e: 1020, k: "tea",      days: [0, 1, 3, 4], ics: "Hold: Tea Service" },
+    { t: "Tea Debrief",        s: 1020, e: 1050, k: "tea",      days: [0, 1, 3, 4], ics: "Hold: Tea Service" },
+    { t: "Break",              s: 1050, e: 1080, k: "brk",      days: [0, 1, 3, 4], ics: "Hold: Break" }
+  ];
+
+  function fixedFor(d) {
+    return FIXED.filter(function (f) { return !f.days || f.days.indexOf(d) >= 0; });
+  }
+  function openOf(d) {
+    var held = 0;
+    fixedFor(d).forEach(function (f) { held += f.e - f.s; });
+    return (DAY_END - DAY_START) - held;
+  }
+  var WEEK_CAP = (function () {
+    var t = 0;
+    for (var d = 0; d < 5; d++) t += openOf(d);
+    return t;
+  })();
+  // A "blocked" hold is a hard stop: cards cannot be dropped or resized into it.
+  function blockedHit(day, start, mins) {
+    return fixedFor(day).some(function (f) {
+      return f.k === "blocked" && overlaps(start, start + mins, f.s, f.e);
+    });
+  }
+
+  // Shaded availability bars in the left gutter. Purely informational —
+  // they do not block placement and do not count as conflicts.
+  var SHIFTS = [
+    { who: "Carl", cls: "carl", s: 660, e: 1140 },  // 11:00 AM - 7:00 PM
+    { who: "Mimi", cls: "mimi", s: 510, e: 1050 }   //  8:30 AM - 5:30 PM
+  ];
+
+  // Categories live in state so they can be added, recolored, and removed.
+  // Built-ins use theme variables so they follow light/dark; custom ones carry a hex.
+  var DEFAULT_CATS = [
+    { id: "leadership", name: "Leadership",        color: "var(--cat-leadership)", soft: "var(--cat-leadership-soft)", fixed: true },
+    { id: "community",  name: "Community",         color: "var(--cat-community)",  soft: "var(--cat-community-soft)",  fixed: true },
+    { id: "self",       name: "Self & Reflection", color: "var(--cat-self)",       soft: "var(--cat-self-soft)",       fixed: true },
+    { id: "business",   name: "Business & Team",   color: "var(--cat-business)",   soft: "var(--cat-business-soft)",   fixed: true }
+  ];
+  function seedCats() {
+    return DEFAULT_CATS.map(function (c) {
+      return { id: c.id, name: c.name, color: c.color, soft: c.soft, fixed: true };
+    });
+  }
+
+  var SUPPORTS_MIX = !!(window.CSS && CSS.supports &&
+    CSS.supports("color", "color-mix(in srgb, #ff0000 20%, #ffffff)"));
+
+  function softOf(hex) {
+    if (SUPPORTS_MIX) return "color-mix(in srgb, " + hex + " 17%, var(--surface))";
+    var h = hex.replace("#", "");
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    var r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    return "rgba(" + r + "," + g + "," + b + ",0.2)";
+  }
+
+  // Shelf starts empty — workshops are added via the "Add a Cycle 21 workshop" form.
+  var WORKSHOPS = [];
+
+  var state = load() || { placed: [], custom: [], seq: 1, cats: seedCats() };
+  if (!Array.isArray(state.cats) || !state.cats.length) state.cats = seedCats();
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !Array.isArray(s.placed) || !Array.isArray(s.custom)) return null;
+      if (!Array.isArray(s.cats) || !s.cats.length) s.cats = seedCats();
+      return s;
+    } catch (e) { return null; }
+  }
+  function save() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  function findItem(refId) {
+    for (var i = 0; i < WORKSHOPS.length; i++) if (WORKSHOPS[i].id === refId) return WORKSHOPS[i];
+    for (var j = 0; j < state.custom.length; j++) if (state.custom[j].id === refId) return state.custom[j];
+    return null;
+  }
+  function catById(id) {
+    for (var i = 0; i < state.cats.length; i++) if (state.cats[i].id === id) return state.cats[i];
+    return null;
+  }
+  function catOf(item) {
+    if (item.cat && catById(item.cat)) return item.cat;
+    var src = item.refId ? findItem(item.refId) : null;
+    if (src && src.cat && catById(src.cat)) return src.cat;
+    return state.cats[0].id;
+  }
+  function catName(id) {
+    var c = catById(id);
+    return c ? c.name : "Uncategorized";
+  }
+  function catPaint(id) {
+    var c = catById(id);
+    if (!c) return { color: "var(--slot-line)", soft: "var(--break-bg)" };
+    return { color: c.color, soft: c.soft || softOf(c.color) };
+  }
+  function newCatId() {
+    return "k" + (state.seq++) + "-" + Math.random().toString(36).slice(2, 6);
+  }
+  function fmt(min) {
+    var h = Math.floor(min / 60), m = min % 60;
+    var ap = h >= 12 ? "PM" : "AM";
+    var hh = ((h + 11) % 12) + 1;
+    return hh + (m ? ":" + (m < 10 ? "0" : "") + m : "") + " " + ap;
+  }
+  function snap(min) { return Math.round(min / SNAP) * SNAP; }
+  function clampStart(start, mins) {
+    return Math.max(DAY_START, Math.min(start, DAY_END - mins));
+  }
+  function overlaps(aS, aE, bS, bE) { return aS < bE && bS < aE; }
+
+  function conflictsOf(p) {
+    var s = p.start, e = p.start + p.mins;
+    var fx = fixedFor(p.day);
+    for (var i = 0; i < fx.length; i++) {
+      if (overlaps(s, e, fx[i].s, fx[i].e)) return true;
+    }
+    for (var j = 0; j < state.placed.length; j++) {
+      var q = state.placed[j];
+      if (q.uid !== p.uid && q.day === p.day && overlaps(s, e, q.start, q.start + q.mins)) return true;
+    }
+    return false;
+  }
+
+  // ---------- render ----------
+  var cal = document.getElementById("cal");
+  var shelf = document.getElementById("shelf");
+  var statsEl = document.getElementById("stats");
+  var dayCols = [];
+
+  function buildGrid() {
+    for (var d = 0; d < 5; d++) {
+      var head = document.createElement("div");
+      head.className = "day-head";
+      head.innerHTML = "<b>" + DAYS[d] + "</b>" +
+        "<span class='mode " + DAY_MODE[d] + "'>" + MODE_LABEL[DAY_MODE[d]] + "</span>" +
+        "<span data-load='" + d + "'></span>";
+      cal.appendChild(head);
+    }
+    var rail = document.createElement("div");
+    rail.className = "rail";
+    rail.style.height = COL_H + "px";
+    for (var h = 9; h <= 19; h++) {
+      var lab = document.createElement("div");
+      lab.style.top = ((h * 60 - DAY_START) * PX) + "px";
+      lab.textContent = fmt(h * 60);
+      rail.appendChild(lab);
+    }
+    cal.appendChild(rail);
+
+    for (var d2 = 0; d2 < 5; d2++) {
+      var col = document.createElement("div");
+      col.className = "day " + DAY_MODE[d2];
+      col.style.height = COL_H + "px";
+      col.setAttribute("data-day", String(d2));
+      for (var w = 0; w < SHIFTS.length; w++) {
+        var sh = SHIFTS[w];
+        var bar = document.createElement("div");
+        bar.className = "shift " + sh.cls;
+        bar.style.top = ((Math.max(sh.s, DAY_START) - DAY_START) * PX) + "px";
+        bar.style.height = ((Math.min(sh.e, DAY_END) - Math.max(sh.s, DAY_START)) * PX) + "px";
+        bar.title = sh.who + " on shift · " + fmt(sh.s) + " – " + fmt(sh.e);
+        col.appendChild(bar);
+      }
+      var dayFixed = fixedFor(d2);
+      for (var i = 0; i < dayFixed.length; i++) {
+        var f = dayFixed[i];
+        var el = document.createElement("div");
+        el.className = "blk " + f.k;
+        el.style.top = ((f.s - DAY_START) * PX) + "px";
+        el.style.height = ((f.e - f.s) * PX - 2) + "px";
+        if (f.k === "brk") el.textContent = f.t;
+        else el.innerHTML = "<span class='t'>" + f.t + "</span><span class='d'>" + fmt(f.s) + " – " + fmt(f.e) + "</span>";
+        col.appendChild(el);
+      }
+      cal.appendChild(col);
+      dayCols.push(col);
+    }
+  }
+
+  function renderPlaced() {
+    for (var d = 0; d < 5; d++) {
+      var old = dayCols[d].querySelectorAll(".blk.ws");
+      for (var i = 0; i < old.length; i++) old[i].remove();
+    }
+    state.placed.forEach(function (p) {
+      var el = document.createElement("div");
+      var bad = conflictsOf(p);
+      el.className = "blk ws" + (bad ? " conflict" : "");
+      if (!bad) {
+        var paint = catPaint(catOf(p));
+        el.style.background = paint.soft;
+        el.style.borderLeftColor = paint.color;
+      }
+      el.style.top = ((p.start - DAY_START) * PX) + "px";
+      el.style.height = (p.mins * PX - 2) + "px";
+      el.setAttribute("data-uid", p.uid);
+      var cname = catName(catOf(p));
+      // Short blocks have no room for a third line — the color and the
+      // tooltip still carry the category there.
+      var roomy = p.mins >= 45;
+      el.title = p.title + " · " + cname;
+      el.innerHTML =
+        "<span class='t'>" + esc(p.title) + "</span>" +
+        "<span class='d'>" + fmt(p.start) + " – " + fmt(p.start + p.mins) + " · " + p.mins + "m</span>" +
+        (roomy ? "<span class='cx' style='color:" + esc(bad ? "var(--danger)" : catPaint(catOf(p)).color) + "'>" +
+          esc(cname) + "</span>" : "") +
+        "<button class='x' type='button' aria-label='Send back to shelf' title='Send back to shelf'>×</button>" +
+        "<div class='rz' aria-hidden='true'></div>";
+      el.addEventListener("pointerdown", function (e) {
+        if (e.target.classList.contains("x")) return;
+        if (e.target.classList.contains("rz")) { startResize(e, p); return; }
+        startDrag(e, p, "grid");
+      });
+      el.querySelector(".x").addEventListener("click", function () {
+        state.placed = state.placed.filter(function (q) { return q.uid !== p.uid; });
+        save(); renderAll();
+      });
+      dayCols[p.day].appendChild(el);
+    });
+  }
+
+  function renderShelf() {
+    shelf.innerHTML = "";
+    var placedRefs = {};
+    state.placed.forEach(function (p) { placedRefs[p.refId] = true; });
+    var items = WORKSHOPS.concat(state.custom).filter(function (w) { return !placedRefs[w.id]; });
+    if (!items.length) {
+      shelf.innerHTML = state.placed.length
+        ? "<p class='shelf-empty'>Everything is on the board.</p>"
+        : "<p class='shelf-empty'>Shelf is empty — add your first workshop below.</p>";
+      return;
+    }
+    items.forEach(function (w) {
+      var c = document.createElement("div");
+      c.className = "card";
+      c.style.setProperty("--edge", catPaint(catOf(w)).color);
+      c.title = catName(catOf(w));
+      var paint = catPaint(catOf(w));
+      c.innerHTML = "<span class='ct'>" + esc(w.title) + "</span>" +
+        "<span class='cm'><span class='chip' style='background:" + esc(paint.soft) +
+        ";color:" + esc(paint.color) + "'>" + esc(catName(catOf(w))) + "</span>" +
+        "<span class='mn'>" + w.mins + " min</span></span>";
+      c.addEventListener("pointerdown", function (e) { startDrag(e, w, "shelf"); });
+      shelf.appendChild(c);
+    });
+  }
+
+  function renderStats() {
+    var perDay = [0, 0, 0, 0, 0], conflicts = 0;
+    var perCat = {};
+    state.cats.forEach(function (c) { perCat[c.id] = 0; });
+    state.placed.forEach(function (p) {
+      var k = catOf(p);
+      perDay[p.day] += p.mins;
+      perCat[k] = (perCat[k] || 0) + p.mins;
+      if (conflictsOf(p)) conflicts++;
+    });
+    var total = perDay.reduce(function (a, b) { return a + b; }, 0);
+    var shelfCount = WORKSHOPS.length + state.custom.length - state.placed.length;
+    var hrs = function (m) { return (m / 60).toFixed(m % 60 ? 2 : 1).replace(/\.?0+$/, "") + "h"; };
+    var html =
+      "<div class='stat'><b>" + hrs(total) + " / " + hrs(WEEK_CAP) + "</b><span>Scheduled vs capacity</span></div>" +
+      "<div class='stat'><b>" + shelfCount + "</b><span>Still on shelf</span></div>" +
+      "<div class='stat" + (conflicts ? " warn" : "") + "'><b>" + conflicts + "</b><span>Conflicts</span></div>";
+    state.cats.forEach(function (c) {
+      html += "<div class='stat'><b>" + hrs(perCat[c.id] || 0) + "</b>" +
+        "<span><i class='dot' style='background:" + esc(c.color) + "'></i>" + esc(c.name) + "</span></div>";
+    });
+    statsEl.innerHTML = html;
+    for (var d = 0; d < 5; d++) {
+      var span = cal.querySelector("[data-load='" + d + "']");
+      if (span) {
+        span.textContent = hrs(perDay[d]) + " / " + hrs(openOf(d));
+        span.className = perDay[d] > openOf(d) ? "over" : "";
+      }
+    }
+  }
+
+  // ---------- categories ui ----------
+  var catListEl = document.getElementById("catList");
+  var catSelect = document.getElementById("nw-cat");
+
+  function renderCatSelect() {
+    var keep = catSelect.value;
+    catSelect.innerHTML = "";
+    state.cats.forEach(function (c) {
+      var o = document.createElement("option");
+      o.value = c.id;
+      o.textContent = c.name;
+      catSelect.appendChild(o);
+    });
+    catSelect.value = catById(keep) ? keep : state.cats[0].id;
+  }
+
+  function usageOf(catId) {
+    var mins = 0, count = 0;
+    state.placed.forEach(function (p) {
+      if (catOf(p) === catId) { mins += p.mins; count++; }
+    });
+    state.custom.forEach(function (w) { if (catOf(w) === catId) count++; });
+    return { mins: mins, count: count };
+  }
+
+  function renderCats() {
+    catListEl.innerHTML = "";
+    state.cats.forEach(function (c) {
+      var use = usageOf(c.id);
+      var row = document.createElement("div");
+      row.className = "catrow";
+
+      if (c.fixed) {
+        var sw = document.createElement("i");
+        sw.className = "sw2";
+        sw.style.background = c.soft || softOf(c.color);
+        sw.style.border = "1px solid " + c.color;
+        row.appendChild(sw);
+      } else {
+        var pick = document.createElement("input");
+        pick.type = "color";
+        pick.value = c.color;
+        pick.setAttribute("aria-label", "Color for " + c.name);
+        // Repaint live while the picker is open, but only rebuild this list on
+        // commit — redrawing the row mid-drag would tear out the open picker.
+        pick.addEventListener("input", function () {
+          c.color = pick.value;
+          c.soft = softOf(pick.value);
+          renderPlaced(); renderShelf(); renderStats(); renderLegend();
+        });
+        pick.addEventListener("change", function () {
+          save(); renderAll();
+        });
+        row.appendChild(pick);
+      }
+
+      var nm = document.createElement("span");
+      nm.className = "nm";
+      nm.textContent = c.name;
+      row.appendChild(nm);
+
+      var mins = document.createElement("span");
+      mins.className = "mins";
+      mins.textContent = use.mins ? (use.mins / 60).toFixed(use.mins % 60 ? 2 : 1).replace(/\.?0+$/, "") + "h" : "\u2014";
+      mins.title = use.count + " workshop" + (use.count === 1 ? "" : "s") + " in this category";
+      row.appendChild(mins);
+
+      if (c.fixed) {
+        var lock = document.createElement("span");
+        lock.className = "lock";
+        lock.textContent = "built-in";
+        row.appendChild(lock);
+      } else {
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "del";
+        del.textContent = "\u00d7";
+        del.title = "Delete category";
+        del.setAttribute("aria-label", "Delete category " + c.name);
+        del.addEventListener("click", function () {
+          var u = usageOf(c.id);
+          var fallback = state.cats.filter(function (x) { return x.id !== c.id; })[0];
+          if (!fallback) { window.alert("Keep at least one category."); return; }
+          if (u.count && !window.confirm(
+            "\"" + c.name + "\" is used by " + u.count + " workshop" + (u.count === 1 ? "" : "s") +
+            ". Delete it and move them to \"" + fallback.name + "\"?")) return;
+          state.placed.forEach(function (p) { if (catOf(p) === c.id) p.cat = fallback.id; });
+          state.custom.forEach(function (w) { if (catOf(w) === c.id) w.cat = fallback.id; });
+          state.cats = state.cats.filter(function (x) { return x.id !== c.id; });
+          save(); renderCatSelect(); renderAll();
+        });
+        row.appendChild(del);
+      }
+
+      catListEl.appendChild(row);
+    });
+  }
+
+  document.getElementById("catform").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var nameEl = document.getElementById("nc-name");
+    var colorEl = document.getElementById("nc-color");
+    var name = nameEl.value.trim();
+    if (!name) { nameEl.focus(); return; }
+    var dupe = state.cats.some(function (c) { return c.name.toLowerCase() === name.toLowerCase(); });
+    if (dupe) { window.alert("There is already a category called \"" + name + "\"."); nameEl.focus(); return; }
+    var hex = colorEl.value;
+    state.cats.push({ id: newCatId(), name: name, color: hex, soft: softOf(hex), fixed: false });
+    nameEl.value = "";
+    save(); renderCatSelect(); renderAll();
+  });
+
+  // ---------- legend ----------
+  var legendEl = document.getElementById("legend");
+
+  function renderLegend() {
+    var html =
+      "<span><i class='swatch ritual'></i>Daily ritual (fixed)</span>" +
+      "<span><i class='swatch tea'></i>Tea service (fixed)</span>" +
+      "<span><i class='swatch brk'></i>Break / lunch (fixed)</span>" +
+      "<span><i class='swatch wellness'></i>Wellness Workshop (Wed, fixed)</span>" +
+      "<span><i class='swatch blocked'></i>Out of cycle (Wed after 2:00 PM)</span>";
+    state.cats.forEach(function (c) {
+      html += "<span><i class='swatch' style='background:" + esc(c.soft || softOf(c.color)) +
+        ";border:1px solid " + esc(c.color) + "'></i>" + esc(c.name) + "</span>";
+    });
+    html += "<span><i class='swatch cf'></i>Conflict</span>" +
+      "<span><i class='swatch md-inperson'></i>In person " + "\u00b7" + " Mon, Tue, Thu</span>" +
+      "<span><i class='swatch md-virtual'></i>Virtual " + "\u00b7" + " Wed, Fri</span>";
+    SHIFTS.forEach(function (sh) {
+      html += "<span><i class='swatch sh-" + sh.cls + "'></i>" + esc(sh.who) +
+        " on shift \u00b7 " + fmt(sh.s) + " \u2013 " + fmt(sh.e) + "</span>";
+    });
+    legendEl.innerHTML = html;
+  }
+
+  function renderAll() { renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); }
+
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  // ---------- drag ----------
+  var drag = null;
+
+  function startDrag(e, item, origin) {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    var ghost = document.createElement("div");
+    ghost.className = "drag-ghost";
+    ghost.textContent = item.title;
+    document.body.appendChild(ghost);
+    drag = {
+      item: item, origin: origin, ghost: ghost,
+      mins: origin === "grid" ? item.mins : item.mins,
+      preview: null, overDay: -1, dropStart: -1
+    };
+    moveGhost(e);
+    window.addEventListener("pointermove", onDragMove);
+    window.addEventListener("pointerup", onDragUp);
+  }
+
+  function moveGhost(e) {
+    drag.ghost.style.left = (e.clientX + 10) + "px";
+    drag.ghost.style.top = (e.clientY + 8) + "px";
+  }
+
+  function onDragMove(e) {
+    moveGhost(e);
+    var under = document.elementFromPoint(e.clientX, e.clientY);
+    var col = under ? under.closest(".day") : null;
+    var shelfZone = under ? under.closest(".shelf") : null;
+
+    dayCols.forEach(function (c) { c.classList.remove("drop-ok"); });
+    if (drag.preview) { drag.preview.remove(); drag.preview = null; }
+    drag.overDay = -1; drag.dropStart = -1; drag.blocked = false; drag.toShelf = !!shelfZone;
+
+    if (col) {
+      var day = parseInt(col.getAttribute("data-day"), 10);
+      var rect = col.getBoundingClientRect();
+      var min = snap(DAY_START + (e.clientY - rect.top) / PX - drag.mins / 2);
+      min = clampStart(min, drag.mins);
+      var blocked = blockedHit(day, min, drag.mins);
+      col.classList.add("drop-ok");
+      var pv = document.createElement("div");
+      pv.className = "preview" + (blocked ? " bad" : "");
+      pv.style.top = ((min - DAY_START) * PX) + "px";
+      pv.style.height = (drag.mins * PX - 2) + "px";
+      col.appendChild(pv);
+      drag.preview = pv; drag.overDay = day; drag.dropStart = min; drag.blocked = blocked;
+    }
+  }
+
+  function onDragUp() {
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", onDragUp);
+    dayCols.forEach(function (c) { c.classList.remove("drop-ok"); });
+    if (drag.preview) drag.preview.remove();
+    drag.ghost.remove();
+
+    if (drag.overDay >= 0 && drag.blocked) {
+      icsSay("Nothing can be scheduled there \u2014 Wednesday is out of cycle after 2:00 PM.", true);
+    } else if (drag.overDay >= 0) {
+      if (drag.origin === "shelf") {
+        state.placed.push({
+          uid: "p" + (state.seq++),
+          refId: drag.item.id,
+          title: drag.item.title,
+          mins: drag.item.mins,
+          cat: catOf(drag.item),
+          day: drag.overDay,
+          start: drag.dropStart
+        });
+      } else {
+        drag.item.day = drag.overDay;
+        drag.item.start = drag.dropStart;
+      }
+      save(); renderAll();
+    } else if (drag.origin === "grid" && drag.toShelf) {
+      state.placed = state.placed.filter(function (q) { return q.uid !== drag.item.uid; });
+      save(); renderAll();
+    }
+    drag = null;
+  }
+
+  // ---------- resize ----------
+  function startResize(e, p) {
+    e.preventDefault();
+    e.stopPropagation();
+    var startY = e.clientY, origMins = p.mins;
+    var el = dayCols[p.day].querySelector("[data-uid='" + p.uid + "']");
+    function onMove(ev) {
+      var mins = snap(origMins + (ev.clientY - startY) / PX);
+      var stop = DAY_END;
+      fixedFor(p.day).forEach(function (f) {
+        if (f.k === "blocked" && f.s >= p.start && f.s < stop) stop = f.s;
+      });
+      mins = Math.max(15, Math.min(mins, stop - p.start));
+      p.mins = mins;
+      if (el) {
+        el.style.height = (mins * PX - 2) + "px";
+        var d = el.querySelector(".d");
+        if (d) d.textContent = fmt(p.start) + " – " + fmt(p.start + p.mins) + " · " + p.mins + "m";
+      }
+    }
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      save(); renderAll();
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  // ---------- add custom ----------
+  document.getElementById("addform").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var nameEl = document.getElementById("nw-name");
+    var name = nameEl.value.trim();
+    if (!name) { nameEl.focus(); return; }
+    var mins = parseInt(document.getElementById("nw-mins").value, 10);
+    var cat = document.getElementById("nw-cat").value;
+    if (!catById(cat)) cat = state.cats[0].id;
+    state.custom.push({ id: "c" + (state.seq++), title: name, mins: mins, tag: "New", cat: cat });
+    nameEl.value = "";
+    save(); renderShelf(); renderStats();
+  });
+
+  // ---------- ics export ----------
+  var icsDateEl = document.getElementById("icsDate");
+  (function initIcsDate() {
+    var now = new Date();
+    var monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + ((8 - now.getDay()) % 7));
+    var p = function (n) { return (n < 10 ? "0" : "") + n; };
+    icsDateEl.value = monday.getFullYear() + "-" + p(monday.getMonth() + 1) + "-" + p(monday.getDate());
+  })();
+
+  // ---------- export naming ----------
+  var icsNameEl = document.getElementById("icsName");
+  var autoName = "";
+
+  function defaultName() {
+    return icsDateEl.value ? "cycle21-week-of-" + icsDateEl.value : "cycle21-week";
+  }
+  function cleanName(v) {
+    return String(v).trim()
+      .replace(/\.ics$/i, "")
+      .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-")
+      .replace(/\s+/g, " ")
+      .replace(/^[.\s-]+|[.\s-]+$/g, "")
+      .slice(0, 70);
+  }
+  function exportName() {
+    return cleanName(icsNameEl.value) || cleanName(defaultName()) || "cycle21-week";
+  }
+  function refreshAutoName() {
+    // Only overwrite a name the field filled in itself, never one that was typed.
+    if (icsNameEl.value && icsNameEl.value !== autoName) return;
+    autoName = defaultName();
+    icsNameEl.value = autoName;
+  }
+  icsDateEl.addEventListener("change", refreshAutoName);
+  refreshAutoName();
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  function icsLocal(d, minOfDay) {
+    var dt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, minOfDay);
+    return dt.getFullYear() + pad2(dt.getMonth() + 1) + pad2(dt.getDate()) + "T" +
+      pad2(dt.getHours()) + pad2(dt.getMinutes()) + "00";
+  }
+  function icsStamp(d) {
+    return d.getUTCFullYear() + pad2(d.getUTCMonth() + 1) + pad2(d.getUTCDate()) + "T" +
+      pad2(d.getUTCHours()) + pad2(d.getUTCMinutes()) + pad2(d.getUTCSeconds()) + "Z";
+  }
+  function icsEsc(s) {
+    return String(s).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+  }
+
+  document.getElementById("icsBtn").addEventListener("click", function () {
+    var val = icsDateEl.value;
+    if (!val) { window.alert("Pick the Monday the week starts first."); icsDateEl.focus(); return; }
+    var parts = val.split("-");
+    var monday = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+    if (monday.getDay() !== 1 && !window.confirm("That date isn't a Monday. Export anyway, treating it as day 1?")) return;
+    var name = exportName();
+    icsNameEl.value = name;
+    var includeHolds = document.getElementById("icsHolds").checked;
+    if (!state.placed.length && !includeHolds) {
+      window.alert("Nothing to export — place some workshops or include the holds.");
+      return;
+    }
+
+    var stamp = icsStamp(new Date());
+    var seq = 0;
+    var lines = [
+      "BEGIN:VCALENDAR", "VERSION:2.0",
+      "PRODID:-//Tech Foundations//Cycle 21 Planner//EN", "CALSCALE:GREGORIAN"
+    ];
+    function addEvent(dayIdx, s, e, title, cat, desc) {
+      var d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + dayIdx);
+      lines.push("BEGIN:VEVENT");
+      lines.push("UID:tf-c21-" + (++seq) + "-" + icsLocal(d, s) + "@techfoundations");
+      lines.push("DTSTAMP:" + stamp);
+      lines.push("DTSTART:" + icsLocal(d, s));
+      lines.push("DTEND:" + icsLocal(d, e));
+      lines.push("SUMMARY:" + icsEsc(title));
+      lines.push("CATEGORIES:" + icsEsc(cat));
+      lines.push("LOCATION:" + icsEsc(MODE_LABEL[DAY_MODE[dayIdx]]));
+      if (desc) lines.push("DESCRIPTION:" + icsEsc(desc));
+      lines.push("END:VEVENT");
+    }
+
+    for (var d = 0; d < 5; d++) {
+      if (includeHolds) {
+        fixedFor(d).forEach(function (f) {
+          addEvent(d, f.s, f.e, f.t, f.ics, "Fixed Tech Foundations hold (Cycle 21).");
+        });
+      }
+      state.placed
+        .filter(function (p) { return p.day === d; })
+        .sort(function (a, b) { return a.start - b.start; })
+        .forEach(function (p) {
+          addEvent(d, p.start, p.start + p.mins, p.title, catName(catOf(p)),
+            "Cycle 21 workshop · " + catName(catOf(p)) + " · " + p.mins + " min" +
+            (conflictsOf(p) ? " · WARNING: conflicts with another block on the planner" : ""));
+        });
+    }
+    lines.push("END:VCALENDAR");
+
+    var text = lines.join("\r\n");
+    var msg = document.getElementById("icsMsg");
+    function say(t, isErr) {
+      msg.textContent = t;
+      msg.className = "ics-msg" + (isErr ? " err" : "");
+    }
+    function blobDownload() {
+      var blob = new Blob([text], { type: "text/calendar;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = name + ".ics";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      say("Downloaded " + name + ".ics — open it to import the week into Outlook, or load it back here later.");
+    }
+    function clipboardFallback() {
+      var help = "Copied the calendar data. Paste it into Notepad, save the file as " + name + ".ics, " +
+        "then open that file and Outlook imports the whole week. (The team copy of the planner downloads the .ics directly.)";
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          function () { say(help); },
+          function () { window.prompt("Copy this, paste into Notepad, save as " + name + ".ics:", text); }
+        );
+      } else {
+        window.prompt("Copy this, paste into Notepad, save as " + name + ".ics:", text);
+      }
+    }
+    if (window.claude && window.claude.downloads) {
+      // Claude-hosted view with the save permission: direct downloads are
+      // sandboxed and the save allowlist has no .ics — save .txt, rename once.
+      say("Check the save prompt…");
+      window.claude.downloads.save({ filename: name + ".ics.txt", data: text })
+        .then(function () {
+          say("Saved as .txt — rename it so it ends in .ics, then open it and Outlook imports the whole week.");
+        })
+        .catch(function (err) {
+          var code = err && err.code;
+          if (code === "declined") { say("Save canceled — nothing exported."); return; }
+          if (code === "rate_limited") { say("A save prompt is already open. Close it, then try again.", true); return; }
+          clipboardFallback();
+        });
+    } else if (window.claude) {
+      // Claude-hosted view without file saving (e.g. publicly shared page).
+      clipboardFallback();
+    } else {
+      blobDownload();
+    }
+  });
+
+  // ---------- ics import ----------
+  var IMPORT_PALETTE = ["#7A5C9E", "#2F7D6B", "#B0713A", "#4A6B8A", "#96504B", "#5B6B4F", "#8A5A6B"];
+
+  function icsSay(t, isErr) {
+    var m = document.getElementById("icsMsg");
+    m.textContent = t;
+    m.className = "ics-msg" + (isErr ? " err" : "");
+  }
+
+  function icsUnesc(v) {
+    return String(v)
+      .replace(/\\n/gi, "\n").replace(/\\,/g, ",")
+      .replace(/\\;/g, ";").replace(/\\\\/g, "\\");
+  }
+
+  function icsToDate(v) {
+    var m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/.exec(String(v).trim());
+    if (!m) return null;
+    var y = +m[1], mo = +m[2] - 1, d = +m[3], h = +(m[4] || 0), mi = +(m[5] || 0);
+    if (m[7] === "Z") return new Date(Date.UTC(y, mo, d, h, mi));
+    return new Date(y, mo, d, h, mi);
+  }
+
+  function parseIcs(text) {
+    // RFC 5545 folds long lines with a leading space or tab on the continuation.
+    var body = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n[ \t]/g, "");
+    var out = [], cur = null;
+    body.split("\n").forEach(function (raw) {
+      var line = raw.replace(/\s+$/, "");
+      if (!line) return;
+      if (/^BEGIN:VEVENT$/i.test(line)) { cur = {}; return; }
+      if (/^END:VEVENT$/i.test(line)) { if (cur) out.push(cur); cur = null; return; }
+      if (!cur) return;
+      var i = line.indexOf(":");
+      if (i < 0) return;
+      var key = line.slice(0, i).split(";")[0].toUpperCase();
+      var val = line.slice(i + 1);
+      if (key === "DTSTART") cur.start = icsToDate(val);
+      else if (key === "DTEND") cur.end = icsToDate(val);
+      else if (key === "SUMMARY") cur.summary = icsUnesc(val);
+      else if (key === "CATEGORIES") cur.cat = icsUnesc(val);
+    });
+    return out;
+  }
+
+  function catIdForName(name) {
+    var want = String(name || "").trim();
+    if (!want) return state.cats[0].id;
+    for (var i = 0; i < state.cats.length; i++) {
+      if (state.cats[i].name.toLowerCase() === want.toLowerCase()) return state.cats[i].id;
+    }
+    var hex = IMPORT_PALETTE[state.cats.length % IMPORT_PALETTE.length];
+    var nc = { id: newCatId(), name: want, color: hex, soft: softOf(hex), fixed: false };
+    state.cats.push(nc);
+    return nc.id;
+  }
+
+  function isHoldEvent(e) {
+    if (e.cat && /^\s*hold:/i.test(e.cat)) return true;
+    var t = String(e.summary || "").toLowerCase();
+    return FIXED.some(function (f) { return f.t.toLowerCase() === t; });
+  }
+
+  function importIcs(text) {
+    var raw;
+    try { raw = parseIcs(text); } catch (err) { raw = []; }
+    if (!raw.length) { icsSay("No calendar events found in that file.", true); return; }
+
+    var skippedWeekend = 0, skippedHolds = 0, skippedBad = 0, skippedBlocked = 0;
+    var picked = [], earliest = null;
+
+    raw.forEach(function (e) {
+      if (!e.start || !e.end || !e.summary) { skippedBad++; return; }
+      if (isHoldEvent(e)) { skippedHolds++; return; }
+      var dow = e.start.getDay();
+      if (dow < 1 || dow > 5) { skippedWeekend++; return; }
+      var mins = Math.round((e.end - e.start) / 60000);
+      if (!(mins > 0)) { skippedBad++; return; }
+      mins = Math.max(15, Math.min(snap(mins), DAY_END - DAY_START));
+      var start = clampStart(snap(e.start.getHours() * 60 + e.start.getMinutes()), mins);
+      if (blockedHit(dow - 1, start, mins)) { skippedBlocked++; return; }
+      picked.push({ day: dow - 1, start: start, mins: mins, title: e.summary, cat: e.cat });
+      if (!earliest || e.start < earliest) earliest = e.start;
+    });
+
+    if (!picked.length) {
+      icsSay("That file had " + raw.length + " event" + (raw.length === 1 ? "" : "s") +
+        ", but none of them were workshops on a weekday.", true);
+      return;
+    }
+    if (state.placed.length && !window.confirm(
+      "Import " + picked.length + " workshop" + (picked.length === 1 ? "" : "s") +
+      "? This replaces the " + state.placed.length + " already on the board.")) {
+      icsSay("Import canceled \u2014 the board is unchanged.");
+      return;
+    }
+
+    state.placed = picked.map(function (r) {
+      return {
+        uid: "p" + (state.seq++),
+        refId: "imp" + state.seq,
+        title: r.title,
+        mins: r.mins,
+        cat: catIdForName(r.cat),
+        day: r.day,
+        start: r.start
+      };
+    });
+
+    if (earliest) {
+      var monday = new Date(earliest.getFullYear(), earliest.getMonth(),
+        earliest.getDate() - ((earliest.getDay() + 6) % 7));
+      icsDateEl.value = monday.getFullYear() + "-" + pad2(monday.getMonth() + 1) + "-" + pad2(monday.getDate());
+    }
+
+    save(); renderCatSelect(); renderAll();
+
+    var extra = [];
+    if (skippedHolds) extra.push(skippedHolds + " hold" + (skippedHolds === 1 ? "" : "s"));
+    if (skippedWeekend) extra.push(skippedWeekend + " off the Mon\u2013Fri grid");
+    if (skippedBlocked) extra.push(skippedBlocked + " in the Wednesday blackout");
+    if (skippedBad) extra.push(skippedBad + " unreadable");
+    icsSay("Loaded " + state.placed.length + " workshop" + (state.placed.length === 1 ? "" : "s") +
+      (extra.length ? " (skipped " + extra.join(", ") + ")" : "") + ".");
+  }
+
+  var icsFileEl = document.getElementById("icsFile");
+  document.getElementById("importBtn").addEventListener("click", function () { icsFileEl.click(); });
+  icsFileEl.addEventListener("change", function () {
+    var file = icsFileEl.files && icsFileEl.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () { importIcs(reader.result); icsFileEl.value = ""; };
+    reader.onerror = function () { icsSay("Could not read that file.", true); icsFileEl.value = ""; };
+    reader.readAsText(file);
+  });
+
+  // ---------- export / reset ----------
+  document.getElementById("exportBtn").addEventListener("click", function () {
+    var lines = [exportName(), ""];
+    for (var d = 0; d < 5; d++) {
+      lines.push(DAYS[d] + ":");
+      var items = state.placed.filter(function (p) { return p.day === d; })
+        .sort(function (a, b) { return a.start - b.start; });
+      if (!items.length) lines.push("  (no workshops placed)");
+      items.forEach(function (p) {
+        lines.push("  " + fmt(p.start) + " – " + fmt(p.start + p.mins) + "  " + p.title +
+          "  [" + catName(catOf(p)) + "]" + (conflictsOf(p) ? "  [CONFLICT]" : ""));
+      });
+      lines.push("");
+    }
+    var text = lines.join("\n");
+    var btn = this;
+    function done() {
+      btn.textContent = "Copied ✓";
+      setTimeout(function () { btn.textContent = "Copy schedule"; }, 1600);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { window.prompt("Copy the schedule:", text); });
+    } else {
+      window.prompt("Copy the schedule:", text);
+    }
+  });
+
+  document.getElementById("resetBtn").addEventListener("click", function () {
+    if (!window.confirm("Clear the whole board, any custom workshops, and any custom categories?")) return;
+    state = { placed: [], custom: [], seq: 1, cats: seedCats() };
+    save(); renderAll();
+  });
+
+  buildGrid();
+  renderCatSelect();
+  renderAll();
+})();
+</script>
+</html>
