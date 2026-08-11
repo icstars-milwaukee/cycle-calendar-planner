@@ -76,16 +76,14 @@ function hhmm(minutesOfDay) {
   return pad2(Math.floor(m / 60)) + ":" + pad2(m % 60) + ":00";
 }
 
-function toEvents(snapshot, room) {
-  const plan = snapshot.plan;
-  if (!plan) return { ok: true, weekOf: null, events: [], version: snapshot.version };
+function toEvents(plan, room) {
+  if (!plan) return { ok: true, weekOf: null, events: [] };
   if (!plan.weekOf) {
     return {
       ok: false,
       error: "This board has no week set. Pick the Monday it starts in the planner before syncing.",
       weekOf: null,
       events: [],
-      version: snapshot.version,
     };
   }
 
@@ -115,11 +113,38 @@ function toEvents(snapshot, room) {
     ok: true,
     weekOf: plan.weekOf,
     timeZone: CAL_TZ,
-    version: snapshot.version,
-    updated: snapshot.updated,
     count: events.length,
     events,
   };
+}
+
+/**
+ * How far the live board has drifted from what was last published.
+ *
+ * The board is edited continuously and collaboratively, so it is never a safe thing to
+ * mirror directly -- a half-finished drag would reach people's calendars. The calendar
+ * follows an explicitly published snapshot instead, and this reports what publishing
+ * would change so the UI can say so before anyone commits.
+ */
+function pendingChanges(livePlan, publishedPlan, room) {
+  const live = toEvents(livePlan, room);
+  const pub = toEvents(publishedPlan, room);
+
+  // An unset week is a blocker, not a change count: nothing can be published yet.
+  if (!live.ok) return { ready: false, error: live.error, added: 0, changed: 0, removed: 0, total: 0 };
+
+  const pubMap = new Map(pub.ok ? pub.events.map((e) => [e.uid, eventHash(e)]) : []);
+  let added = 0, changed = 0;
+  for (const ev of live.events) {
+    const prior = pubMap.get(ev.uid);
+    if (prior === undefined) added++;
+    else if (prior !== eventHash(ev)) changed++;
+  }
+  const liveUids = new Set(live.events.map((e) => e.uid));
+  let removed = 0;
+  for (const uid of pubMap.keys()) if (!liveUids.has(uid)) removed++;
+
+  return { ready: true, added, changed, removed, total: added + changed + removed };
 }
 
 /**
@@ -158,13 +183,23 @@ function graphBody(ev) {
   };
 }
 
-function buildSyncPlan(snapshot, room, pushed) {
-  const projection = toEvents(snapshot, room);
+function buildSyncPlan(publishedPlan, room, pushed) {
+  // Deliberately the *published* snapshot, never the live board. Someone mid-drag must
+  // not reach anyone's calendar.
+  if (!publishedPlan) {
+    return {
+      ok: false,
+      error: "Nothing has been published yet. Open the planner and choose Publish to calendar.",
+      create: [], update: [], delete: [],
+    };
+  }
+
+  const projection = toEvents(publishedPlan, room);
 
   // No week means no dates. Returning empty lists rather than an error with deletions
   // matters: an unset week must never be read as "the board is empty, remove everything".
   if (!projection.ok) {
-    return { ok: false, error: projection.error, create: [], update: [], delete: [], version: projection.version };
+    return { ok: false, error: projection.error, create: [], update: [], delete: [] };
   }
 
   const live = new Map(projection.events.map((e) => [e.uid, e]));
@@ -190,7 +225,6 @@ function buildSyncPlan(snapshot, room, pushed) {
     ok: true,
     weekOf: projection.weekOf,
     timeZone: projection.timeZone,
-    version: projection.version,
     create,
     update,
     delete: remove,
@@ -268,11 +302,18 @@ export class Board {
     const origin = request.headers.get("Origin") || "";
     const cors = corsHeaders(origin);
 
+    // A Durable Object does not know the name it was addressed by, but uids and diffs
+    // need it. Remember it, since WebSocket handlers get no URL to read it from.
+    const room = (url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})/) || [])[1] || "board";
+    if ((await this.ctx.storage.get("room")) !== room) await this.ctx.storage.put("room", room);
+
     if (url.pathname.endsWith("/sync-plan")) {
-      const room = (url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})/) || [])[1] || "board";
-      const snapshot = await this.snapshot();
+      const published = (await this.ctx.storage.get("published")) || null;
       const pushed = (await this.ctx.storage.get("pushed")) || {};
-      return new Response(JSON.stringify(buildSyncPlan(snapshot, room, pushed)), {
+      const plan = buildSyncPlan(published, room, pushed);
+      const publishedAt = (await this.ctx.storage.get("publishedAt")) || null;
+      const lastNotify = (await this.ctx.storage.get("lastNotify")) || null;
+      return new Response(JSON.stringify({ ...plan, publishedAt, lastNotify }), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
     }
@@ -316,10 +357,11 @@ export class Board {
       });
     }
 
+    // Preview of the *live* board. Useful for checking what publishing would send;
+    // the calendar itself is driven by /sync-plan, which reads the published snapshot.
     if (url.pathname.endsWith("/events")) {
-      const room = (url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})/) || [])[1] || "board";
       const snapshot = await this.snapshot();
-      return new Response(JSON.stringify(toEvents(snapshot, room)), {
+      return new Response(JSON.stringify({ ...toEvents(snapshot.plan, room), version: snapshot.version }), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
     }
@@ -344,7 +386,8 @@ export class Board {
     this.ctx.acceptWebSocket(server);
 
     const snapshot = await this.snapshot();
-    server.send(JSON.stringify({ type: "snapshot", ...snapshot, peers: this.peerCount() }));
+    const publish = await this.publishState(room);
+    server.send(JSON.stringify({ type: "snapshot", ...snapshot, publish, peers: this.peerCount() }));
     this.broadcastPeers();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -355,6 +398,49 @@ export class Board {
     const version = (await this.ctx.storage.get("version")) || 0;
     const updated = (await this.ctx.storage.get("updated")) || null;
     return { plan, version, updated };
+  }
+
+  // What the calendar currently reflects, plus how far the live board has moved past it.
+  async publishState(room) {
+    const plan = (await this.ctx.storage.get("plan")) || null;
+    const published = (await this.ctx.storage.get("published")) || null;
+    const publishedAt = (await this.ctx.storage.get("publishedAt")) || null;
+    return {
+      publishedAt,
+      everPublished: !!published,
+      pending: pendingChanges(plan, published, room || "board"),
+    };
+  }
+
+  /**
+   * Tells the Power Automate flow to run right now.
+   *
+   * PUBLISH_WEBHOOK is the flow's "When an HTTP request is received" trigger URL. That
+   * URL carries its own signature and is a credential, so it lives in a secret rather
+   * than the repo. Unset simply means no instant push -- the scheduled run still works.
+   */
+  async notifyFlow(room, publishedAt) {
+    const hook = this.env.PUBLISH_WEBHOOK;
+    if (!hook) {
+      await this.ctx.storage.put("lastNotify", { at: publishedAt, status: "no webhook configured" });
+      return;
+    }
+    try {
+      const res = await fetch(hook, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room, publishedAt }),
+      });
+      await this.ctx.storage.put("lastNotify", { at: publishedAt, status: res.status, ok: res.ok });
+    } catch (e) {
+      await this.ctx.storage.put("lastNotify", { at: publishedAt, status: "failed: " + (e && e.message) });
+    }
+  }
+
+  async broadcastPublishState(room) {
+    const state = await this.publishState(room);
+    this.broadcast({ type: "publish-state", ...state });
+    return state;
   }
 
   peerCount() {
@@ -381,6 +467,35 @@ export class Board {
 
     if (msg.type === "ping") return ws.send(JSON.stringify({ type: "pong" }));
 
+    // Promote the live board to the snapshot the calendar follows. Explicit and
+    // deliberate: nothing anyone drags reaches a calendar until someone does this.
+    if (msg.type === "publish") {
+      const room = (await this.ctx.storage.get("room")) || "board";
+      const plan = (await this.ctx.storage.get("plan")) || null;
+
+      if (!plan || !plan.weekOf) {
+        return ws.send(JSON.stringify({
+          type: "publish-result",
+          ok: false,
+          error: "Pick the Monday this week starts before publishing to the calendar.",
+        }));
+      }
+
+      const publishedAt = new Date().toISOString();
+      // Deep copy so later edits to the live board cannot mutate what was published.
+      await this.ctx.storage.put({ published: JSON.parse(JSON.stringify(plan)), publishedAt });
+
+      // Poke the flow so the calendar updates now instead of at the next scheduled run.
+      // Deliberately not awaited: publishing must not hang or fail because Power
+      // Automate is slow or down. If this never lands, the flow's scheduled run is the
+      // backstop and the calendar simply catches up a few minutes later.
+      this.ctx.waitUntil(this.notifyFlow(room, publishedAt));
+
+      ws.send(JSON.stringify({ type: "publish-result", ok: true, publishedAt, by: msg.by || null }));
+      const state = await this.broadcastPublishState(room);
+      return state;
+    }
+
     if (msg.type !== "update") return;
 
     if (!msg.plan || typeof msg.plan !== "object" || !Array.isArray(msg.plan.placed)) {
@@ -404,6 +519,11 @@ export class Board {
     const stale = typeof msg.base === "number" && msg.base < current;
     ws.send(JSON.stringify({ type: "ack", version, updated, overwrote: stale }));
     this.broadcast({ type: "sync", plan: msg.plan, version, updated, by: msg.by || null }, ws);
+
+    // Every edit moves the board further from what the calendar shows; keep the
+    // pending count in front of everyone rather than letting drift go unnoticed.
+    const room = (await this.ctx.storage.get("room")) || "board";
+    await this.broadcastPublishState(room);
   }
 
   async webSocketClose(ws) {

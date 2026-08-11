@@ -50,10 +50,60 @@ halfway, the unacked work is simply offered again on the next run.
 If the board has no week set, `sync-plan` returns `ok: false` with **empty lists** — it
 will never interpret a missing week as "the board is empty, delete everything."
 
+## Draft and published
+
+The board is edited live and collaboratively, so mirroring it directly would push
+half-finished drags into people's calendars. It doesn't work that way:
+
+- Editing the board changes **nothing** in the calendar.
+- The header shows how far the board has drifted — e.g. *"3 not published"*.
+- **Publish to calendar** promotes the current board to the snapshot the calendar
+  follows, and the Worker immediately pokes the flow.
+
+`sync-plan` always reads the published snapshot, never the live board. Before anything
+is ever published it returns `ok: false` with empty lists, so an unpublished room can
+never cause deletions.
+
 ## Building the flow
 
-Create a **Scheduled cloud flow**. Every 15 minutes is a reasonable starting point;
-5 is fine too. There is no benefit to going faster than the planner is edited.
+Use an **instant** trigger so publishing updates the calendar within seconds, and keep a
+**scheduled** copy as a safety net for any poke that fails to land.
+
+### Trigger: When an HTTP request is received
+
+Add the trigger **When an HTTP request is received**, with this request body schema:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "room": { "type": "string" },
+    "publishedAt": { "type": "string" }
+  }
+}
+```
+
+Save the flow once — Power Automate only generates the trigger URL after saving. Copy
+that URL and give it to the Worker:
+
+```
+cd worker
+npx.cmd wrangler secret put PUBLISH_WEBHOOK
+```
+
+Paste the URL when prompted. **That URL is a credential** — it carries its own signature
+and anyone holding it can run your flow, so it goes in a Cloudflare secret, never in
+this repository.
+
+If the secret is not set, publishing still works; the calendar just waits for the
+scheduled run instead of updating immediately.
+
+### Also build a scheduled copy
+
+Duplicate the finished flow and swap the trigger for **Recurrence**, every 15 minutes.
+It costs nothing when there is nothing to do — `changes: 0` exits at step 3 — and it
+repairs any publish whose poke was lost. The instant trigger is the fast path; the
+schedule is what makes it reliable.
 
 ### 1. HTTP — get the plan
 
@@ -186,14 +236,16 @@ allow the run to continue.
 
 ## Verifying it works
 
-1. Run the flow once with an empty board — it should do nothing.
-2. Add one workshop in the planner, set the **Week of** date, run the flow. One event
-   appears in the Group calendar.
-3. Run the flow again without touching the board. **Nothing should change** — this is
-   the duplicate check, and the whole design rests on it.
-4. Drag the workshop to another day, run again. The existing event moves; no second
+1. Run the flow once with nothing published — it should do nothing at all.
+2. Add one workshop, set the **Week of** date, and **do not publish**. Run the flow.
+   **Nothing should appear.** This is the preview-mode check.
+3. Press **Publish to calendar**. The event should appear within a few seconds without
+   you running anything.
+4. Run the flow again by hand without touching the board. **Nothing should change** —
+   this is the duplicate check, and the whole design rests on it.
+5. Drag the workshop to another day and publish. The existing event moves; no second
    event appears.
-5. Delete it from the shelf, run again. The event disappears.
+6. Remove it from the board and publish. The event disappears.
 
 ## Known limitations
 

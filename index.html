@@ -131,6 +131,17 @@
   .sync-pill.live { color: var(--moss); border-color: var(--moss); background: var(--moss-soft); }
   .sync-pill.wait { color: var(--tea); border-color: var(--tea); background: var(--tea-soft); }
   .sync-pill.bad { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+  /* How far the board has drifted from what the calendar shows. */
+  .pub-pill {
+    display: inline-flex; align-items: center; gap: 6px; cursor: default;
+    font-size: 11.5px; font-weight: 600; border-radius: 999px;
+    padding: 6px 11px; border: 1px dashed var(--line); background: transparent;
+    color: var(--ink-soft); white-space: nowrap;
+  }
+  .pub-pill.clean { color: var(--moss); border-color: var(--moss); border-style: solid; background: var(--moss-soft); }
+  .pub-pill.dirty { color: var(--tea); border-color: var(--tea); border-style: solid; background: var(--tea-soft); }
+  .pub-pill.blocked { color: var(--danger); border-color: var(--danger); border-style: solid; background: var(--danger-soft); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
   /* Password gate for the shared board. */
   .gate {
     position: fixed; inset: 0; z-index: 50; display: flex;
@@ -417,6 +428,8 @@
       <button id="restoreBtn" type="button">Restore</button>
       <input type="file" id="backupFile" accept=".json,application/json" hidden />
       <button id="resetBtn" type="button">Reset</button>
+      <button id="publishBtn" class="primary" type="button" disabled>Publish to calendar</button>
+      <span id="publishState" class="pub-pill" role="status">Calendar not connected</span>
       <span id="syncStatus" class="sync-pill off" role="status">Offline board</span>
       <span id="icsMsg" class="ics-msg" role="status"></span>
     </div>
@@ -1567,6 +1580,84 @@
       return base.replace(/^http/, "ws") + "/room/" + room + "?pw=" + encodeURIComponent(pw);
     }
 
+    // ----- publishing -----
+    // The board is edited live and together; the calendar follows a snapshot that
+    // someone deliberately publishes. Nothing dragged reaches Outlook on its own.
+    var publishBtn = document.getElementById("publishBtn");
+    var publishEl = document.getElementById("publishState");
+    var publishing = false;
+
+    function ago(iso) {
+      if (!iso) return "";
+      var mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return mins + " min ago";
+      var hrs = Math.floor(mins / 60);
+      if (hrs < 24) return hrs + (hrs === 1 ? " hour ago" : " hours ago");
+      var days = Math.floor(hrs / 24);
+      return days + (days === 1 ? " day ago" : " days ago");
+    }
+
+    function showPublish(s) {
+      if (!publishEl || !s) return;
+      var p = s.pending || {};
+
+      if (p.ready === false) {
+        publishEl.className = "pub-pill blocked";
+        publishEl.textContent = "Set the week first";
+        publishEl.title = p.error || "";
+        publishBtn.disabled = true;
+        return;
+      }
+
+      publishBtn.disabled = publishing;
+
+      if (!s.everPublished) {
+        publishEl.className = "pub-pill dirty";
+        publishEl.textContent = "Never published";
+        publishEl.title = "Nothing has reached the calendar yet.";
+        return;
+      }
+
+      if (!p.total) {
+        publishEl.className = "pub-pill clean";
+        publishEl.textContent = "Calendar up to date";
+        publishEl.title = "Published " + ago(s.publishedAt) + ".";
+        return;
+      }
+
+      var bits = [];
+      if (p.added) bits.push(p.added + " added");
+      if (p.changed) bits.push(p.changed + " changed");
+      if (p.removed) bits.push(p.removed + " removed");
+      publishEl.className = "pub-pill dirty";
+      publishEl.textContent = p.total + " not published";
+      publishEl.title = bits.join(", ") + " since publishing " + ago(s.publishedAt) +
+        ". The calendar still shows the last published version.";
+    }
+
+    if (publishBtn) {
+      publishBtn.addEventListener("click", function () {
+        if (!ws || ws.readyState !== 1) {
+          icsSay("Not connected to the shared board, so there is nothing to publish from.", true);
+          return;
+        }
+        var note = publishEl && publishEl.textContent ? " (" + publishEl.textContent + ")" : "";
+        if (!window.confirm("Publish this board to the Group calendar?" + note +
+            "\n\nEveryone's calendar will be updated on the next sync.")) return;
+        publishing = true;
+        publishBtn.disabled = true;
+        publishBtn.textContent = "Publishing…";
+        try { ws.send(JSON.stringify({ type: "publish", by: who })); }
+        catch (e) {
+          publishing = false;
+          publishBtn.disabled = false;
+          publishBtn.textContent = "Publish to calendar";
+          icsSay("Could not publish just now.", true);
+        }
+      });
+    }
+
     var gate = document.getElementById("gate");
     var gateForm = document.getElementById("gateForm");
     var gatePw = document.getElementById("gatePw");
@@ -1584,6 +1675,13 @@
       if (ws) { try { ws.close(); } catch (e) {} ws = null; }
       if (timer) { clearTimeout(timer); timer = null; }
       syncStatus("off", "Offline board", note || "Saved only in this browser. Not shared.");
+      // Publishing is a shared-board action; there is nothing to publish from offline.
+      if (publishBtn) publishBtn.disabled = true;
+      if (publishEl) {
+        publishEl.className = "pub-pill";
+        publishEl.textContent = "Calendar not connected";
+        publishEl.title = "";
+      }
     }
 
     // Check the password before opening a socket: a rejected WebSocket handshake
@@ -1645,6 +1743,7 @@
 
         if (msg.type === "snapshot") {
           version = msg.version || 0;
+          if (msg.publish) showPublish(msg.publish);
           if (msg.plan) {
             // The room already has a board; it is the shared truth, so adopt it.
             var incoming = null;
@@ -1668,6 +1767,20 @@
 
         if (msg.type === "ack") { version = msg.version || version; peers(); return; }
         if (msg.type === "peers") { peers(msg.peers); return; }
+        if (msg.type === "publish-state") { showPublish(msg); return; }
+        if (msg.type === "publish-result") {
+          publishing = false;
+          if (!msg.ok) {
+            icsSay(msg.error || "Could not publish.", true);
+            publishBtn.disabled = false;
+            publishBtn.textContent = "Publish to calendar";
+            return;
+          }
+          publishBtn.textContent = "Published ✓";
+          icsSay("Published. The Group calendar updates within a few seconds.");
+          setTimeout(function () { publishBtn.textContent = "Publish to calendar"; }, 2200);
+          return;
+        }
         if (msg.type === "error") { syncStatus("bad", "Sync error", msg.message || ""); return; }
       };
 
