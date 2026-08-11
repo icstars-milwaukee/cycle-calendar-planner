@@ -174,15 +174,24 @@ function toEvents(plan, room) {
 
   const events = [];
 
-  // The board is one week's rhythm; the cycle repeats it. Each occurrence gets its own
-  // uid so a single week can be suppressed for a holiday without disturbing the rest.
+  // Each of the fourteen weeks has its own board. Older boards stored a single week
+  // meant to repeat, so fall back to that and treat every week as identical.
+  const weeks = Array.isArray(plan.weeks) && plan.weeks.length === CYCLE_WEEKS
+    ? plan.weeks
+    : Array.from({ length: CYCLE_WEEKS }, () => plan.placed || []);
+
   for (let w = 0; w < CYCLE_WEEKS; w++) {
-    for (const p of plan.placed || []) {
+    for (const p of Array.isArray(weeks[w]) ? weeks[w] : []) {
       const date = addDaysISO(plan.weekOf, w * 7 + p.day);
       if (!date) continue;
       if (blocked.has(date)) continue;
+      // Placed blocks carry `uid`; `id` is only used by shelf items and categories.
+      // Reading the wrong field collapsed every block in a week onto one identifier,
+      // so the calendar received a single event per week instead of the whole day.
+      const blockId = p.uid || p.id;
+      if (!blockId) continue;
       events.push({
-        uid: prefix + p.id + "-w" + (w + 1),
+        uid: prefix + blockId + "-w" + (w + 1),
         subject: p.title,
         category: catName(p.cat || (p.refId ? (plan.custom || []).find((c) => c.id === p.refId) || {} : {}).cat),
         start: { dateTime: date + "T" + hhmm(p.start), timeZone: CAL_TZ },
@@ -280,6 +289,11 @@ function graphBody(ev) {
     start: ev.start,
     end: ev.end,
     isAllDay: !!ev.isAllDay,
+    // Graph uses transactionId to make event creation idempotent: re-POSTing the same
+    // one does not create a second event. Without it, any run that creates events and
+    // then dies before reporting back duplicates all of them on the next attempt --
+    // which is not a rare edge case when 284 events meet a 100-call-per-minute limit.
+    transactionId: ev.uid,
     body: {
       contentType: "text",
       content: "Cycle Calendar Planner" + (ev.category ? " - " + ev.category : "") +
@@ -340,6 +354,93 @@ function buildSyncPlan(publishedPlan, room, pushed) {
   };
 }
 
+/**
+ * Reconciles the published cycle against what is actually on the calendar.
+ *
+ * The older sync-plan trusted a stored map of "what we created". That map is wrong the
+ * moment a run creates events and dies before reporting back, and a wrong map produces
+ * duplicates on the next run -- which is exactly what happened. This takes the calendar
+ * itself as the source of truth, so it is correct no matter how badly a previous run
+ * failed, and needs no acknowledgement step at all.
+ *
+ * Every event we own carries its uid twice: in transactionId, and as "ref: <uid>" in the
+ * body. Older events predate transactionId, so the body is the fallback.
+ */
+function uidOfExisting(ev, marker) {
+  const tx = ev && ev.transactionId;
+  if (typeof tx === "string" && tx.startsWith(marker)) return tx;
+  const content = (ev && ev.body && ev.body.content) || ev.bodyPreview || "";
+  const m = /ref:\s*(\S+)/.exec(String(content));
+  if (m && m[1].startsWith(marker)) return m[1];
+  return null;
+}
+
+function reconcile(publishedPlan, room, existingRaw) {
+  if (!publishedPlan) {
+    return { ok: false, error: "Nothing has been published yet.", create: [], update: [], delete: [] };
+  }
+  const projection = toEvents(publishedPlan, room);
+  if (!projection.ok) {
+    return { ok: false, error: projection.error, create: [], update: [], delete: [] };
+  }
+
+  const marker = "cycle-planner-" + room + "-";
+  const desired = new Map(projection.events.map((e) => [e.uid, e]));
+
+  // Group what is on the calendar by uid. More than one entry for a uid means an earlier
+  // run duplicated it; the extras are deleted rather than left for a human to find.
+  const seen = new Map();
+  let foreign = 0;
+  for (const ev of Array.isArray(existingRaw) ? existingRaw : []) {
+    const uid = uidOfExisting(ev, marker);
+    if (!uid) { foreign++; continue; }   // not ours -- never touched
+    if (!seen.has(uid)) seen.set(uid, []);
+    seen.get(uid).push(ev);
+  }
+
+  const create = [];
+  const update = [];
+  const remove = [];
+
+  for (const [uid, ev] of desired) {
+    const matches = seen.get(uid);
+    if (!matches || !matches.length) {
+      create.push({ uid, event: graphBody(ev) });
+      continue;
+    }
+    // Keep the first, drop any duplicates of it.
+    const keep = matches[0];
+    for (let i = 1; i < matches.length; i++) remove.push({ uid, eventId: matches[i].id, reason: "duplicate" });
+
+    // Only touch it if what is on the calendar actually differs.
+    const sameSubject = (keep.subject || "") === ev.subject;
+    const sameStart = String((keep.start && keep.start.dateTime) || "").slice(0, 19) === ev.start.dateTime;
+    const sameEnd = String((keep.end && keep.end.dateTime) || "").slice(0, 19) === ev.end.dateTime;
+    if (!sameSubject || !sameStart || !sameEnd) {
+      update.push({ uid, eventId: keep.id, event: graphBody(ev) });
+    }
+  }
+
+  // Ours, in the window, but no longer part of the cycle.
+  for (const [uid, matches] of seen) {
+    if (desired.has(uid)) continue;
+    for (const ev of matches) remove.push({ uid, eventId: ev.id, reason: "no longer scheduled" });
+  }
+
+  return {
+    ok: true,
+    weekOf: projection.weekOf,
+    marker,
+    inspected: (existingRaw || []).length,
+    ours: seen.size,
+    foreign,
+    create,
+    update,
+    delete: remove,
+    changes: create.length + update.length + remove.length,
+  };
+}
+
 function deny(cors) {
   return new Response(JSON.stringify({ ok: false, error: "Wrong password." }), {
     status: 401,
@@ -391,7 +492,7 @@ export default {
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(
-      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init)?$/);
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -527,6 +628,59 @@ export class Board {
         });
       }
       return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // Forgets which Graph events belong to this board, without touching the calendar.
+    // Used after a purge, so the next sync rebuilds from nothing rather than trying to
+    // update events that were deleted underneath it.
+    if (url.pathname.endsWith("/reset-tracking")) {
+      if (request.method !== "POST") {
+        return new Response("POST required", { status: 405, headers: cors });
+      }
+      const previous = Object.keys((await this.ctx.storage.get("pushed")) || {}).length;
+      await this.ctx.storage.put({ pushed: {}, lastSync: null });
+      return new Response(JSON.stringify({ ok: true, forgot: previous }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // Everything the calendar should hold for this cycle, plus the window to search.
+    // A purge needs the date range and the marker; it cannot rely on `pushed`, because
+    // orphaned events are by definition the ones that were never recorded there.
+    if (url.pathname.endsWith("/purge-info")) {
+      const published = (await this.ctx.storage.get("published")) || null;
+      const plan = published || (await this.ctx.storage.get("plan")) || null;
+      if (!plan || !plan.weekOf) {
+        return new Response(JSON.stringify({ ok: false, error: "No cycle to purge." }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        ok: true,
+        marker: "cycle-planner-" + room + "-",
+        // A day either side so timezone handling at the boundaries cannot hide an event.
+        start: addDaysISO(plan.weekOf, -1) + "T00:00:00",
+        end: addDaysISO(cycleEnd(plan.weekOf), 2) + "T00:00:00",
+      }), { headers: { ...cors, "Content-Type": "application/json" } });
+    }
+
+    // The flow sends what is currently on the calendar; this answers with what to change.
+    // Self-correcting: a half-finished previous run changes nothing about the answer.
+    if (url.pathname.endsWith("/reconcile")) {
+      if (request.method !== "POST") {
+        return new Response("POST required", { status: 405, headers: cors });
+      }
+      let body;
+      try { body = await request.json(); } catch (e) {
+        return new Response(JSON.stringify({ ok: false, error: "Body was not JSON." }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      const published = (await this.ctx.storage.get("published")) || null;
+      const result = reconcile(published, room, body.events || body.value || []);
+      return new Response(JSON.stringify(result), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
     }

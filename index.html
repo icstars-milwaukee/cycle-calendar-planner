@@ -142,6 +142,22 @@
   .pub-pill.dirty { color: var(--tea); border-color: var(--tea); border-style: solid; background: var(--tea-soft); }
   .pub-pill.blocked { color: var(--danger); border-color: var(--danger); border-style: solid; background: var(--danger-soft); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* Week navigator. */
+  .weekbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 0 0 12px; padding: 9px 12px;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  }
+  .weekbar button { padding: 6px 11px; font-size: 12px; }
+  .weekbar-mid { display: flex; align-items: center; gap: 10px; }
+  .weekbar select {
+    font: inherit; font-size: 13px; font-weight: 700; padding: 6px 9px;
+    border-radius: 7px; border: 1px solid var(--line);
+    background: var(--paper); color: var(--ink);
+  }
+  .weekbar-dates { font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .weekbar-spacer { flex: 1; }
+  .weekbar.holiday-week { border-color: var(--danger); background: var(--danger-soft); }
   /* Cycle period and holidays. */
   .cycle {
     border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
@@ -326,6 +342,14 @@
   .day-head b { display: block; font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); }
   .day-head span { font-size: 10.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
   .day-head span.over { color: var(--danger); font-weight: 600; }
+  /* The real date of this column in the selected week, so navigating weeks is visible
+     on the board itself and not only in the week bar. */
+  .day-head .daydate {
+    display: block; font-size: 11px; font-weight: 700; color: var(--ink);
+    font-variant-numeric: tabular-nums; margin: 1px 0 2px;
+  }
+  .day-head .daydate.closed { color: var(--danger); }
+  .day.closed { background: var(--danger-soft); box-shadow: inset 0 0 0 1px var(--danger); }
   .day-head .mode {
     display: inline-block; font-size: 8.5px; font-weight: 700; letter-spacing: 0.09em;
     text-transform: uppercase; padding: 1px 7px; border-radius: 999px; margin: 3px 0 2px;
@@ -533,6 +557,18 @@
     </div>
   </details>
 
+  <div class="weekbar" id="weekbar">
+    <button id="weekPrev" type="button" aria-label="Previous week">◀</button>
+    <div class="weekbar-mid">
+      <select id="weekPick" aria-label="Week of the cycle"></select>
+      <span class="weekbar-dates" id="weekDates"></span>
+    </div>
+    <button id="weekNext" type="button" aria-label="Next week">▶</button>
+    <span class="weekbar-spacer"></span>
+    <button id="copyToAll" type="button">Apply this week to all 14</button>
+    <button id="copyToRest" type="button">Apply to week <span id="restFrom"></span> onward</button>
+  </div>
+
   <div class="stats" id="stats"></div>
 
   <details class="holds" open>
@@ -702,6 +738,38 @@
   var state = load() || { placed: [], custom: [], seq: 1, cats: seedCats() };
   if (!Array.isArray(state.cats) || !state.cats.length) state.cats = seedCats();
 
+  // ---------- the 14 weeks ----------
+  // Every week is its own board. state.weeks holds all fourteen; state.placed is a live
+  // alias to whichever one is on screen, so the rest of the app keeps working against a
+  // single array without knowing weeks exist. Anything that reassigns state.placed has to
+  // write back through setPlaced(), or the alias silently detaches from state.weeks.
+  var CYCLE_WEEKS = 14;
+  var curWeek = 1;
+
+  function migrateWeeks() {
+    if (!Array.isArray(state.weeks) || state.weeks.length !== CYCLE_WEEKS) {
+      // An older board was one repeating week: seed all fourteen from it so nothing
+      // already planned is lost.
+      var base = Array.isArray(state.placed) ? state.placed : [];
+      state.weeks = [];
+      for (var i = 0; i < CYCLE_WEEKS; i++) {
+        state.weeks.push(i === 0 ? base : JSON.parse(JSON.stringify(base)));
+      }
+    }
+    for (var j = 0; j < CYCLE_WEEKS; j++) {
+      if (!Array.isArray(state.weeks[j])) state.weeks[j] = [];
+    }
+    if (curWeek < 1 || curWeek > CYCLE_WEEKS) curWeek = 1;
+    state.placed = state.weeks[curWeek - 1];
+  }
+
+  function setPlaced(arr) {
+    state.weeks[curWeek - 1] = arr;
+    state.placed = arr;
+  }
+
+  migrateWeeks();
+
   function warnStorage(html) {
     if (!warnEl) return;
     warnEl.innerHTML = html;
@@ -828,6 +896,7 @@
       var head = document.createElement("div");
       head.className = "day-head";
       head.innerHTML = "<b>" + DAYS[d] + "</b>" +
+        "<span class='daydate' data-date='" + d + "'></span>" +
         "<span class='mode " + DAY_MODE[d] + "'>" + MODE_LABEL[DAY_MODE[d]] + "</span>" +
         "<span data-load='" + d + "'></span>";
       cal.appendChild(head);
@@ -908,7 +977,7 @@
         startDrag(e, p, "grid");
       });
       el.querySelector(".x").addEventListener("click", function () {
-        state.placed = state.placed.filter(function (q) { return q.uid !== p.uid; });
+        setPlaced(state.placed.filter(function (q) { return q.uid !== p.uid; }));
         save(); renderAll();
       });
       dayCols[p.day].appendChild(el);
@@ -1108,7 +1177,7 @@
     legendEl.innerHTML = html;
   }
 
-  function renderAll() { renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); }
+  function renderAll() { renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -1191,7 +1260,7 @@
       }
       save(); renderAll();
     } else if (drag.origin === "grid" && drag.toShelf) {
-      state.placed = state.placed.filter(function (q) { return q.uid !== drag.item.uid; });
+      setPlaced(state.placed.filter(function (q) { return q.uid !== drag.item.uid; }));
       save(); renderAll();
     }
     drag = null;
@@ -1256,8 +1325,31 @@
     state.weekOf = icsDateEl.value;
   })();
 
-  // The guarded handler for this field lives with the cycle logic further down: it has
-  // to enforce a Monday and confirm before shifting all 14 weeks.
+  // The cycle's start anchors all 14 weeks and every event already on the calendar, so
+  // moving it is a deliberate act, not an incidental edit. This deliberately sits at the
+  // top level rather than inside the sync layer: sync can be switched off, and the start
+  // date still has to be editable when it is.
+  icsDateEl.addEventListener("change", function () {
+    var v = icsDateEl.value;
+    var d = parseISO(v);
+    if (!d) return;
+    if (d.getUTCDay() !== 1) {
+      window.alert("A cycle has to start on a Monday. " + prettyDate(v) + " is a " + DOW[d.getUTCDay()] + ".");
+      icsDateEl.value = state.weekOf || "";
+      return;
+    }
+    if (state.weekOf && v !== state.weekOf) {
+      if (!window.confirm("Move the whole cycle to start " + prettyDate(v) + "?\n\n" +
+          "All 14 weeks shift, and every event already on the calendar moves with them " +
+          "the next time you publish.")) {
+        icsDateEl.value = state.weekOf;
+        return;
+      }
+    }
+    state.weekOf = v;
+    save();
+    renderAll();
+  });
 
   // ---------- cycle period and holidays ----------
   // A cycle is always 14 weeks. The board is one week's rhythm and repeats for all of
@@ -1351,6 +1443,132 @@
 
   var cycleRangeEl = document.getElementById("cycleRange");
   var holidayListEl = document.getElementById("holidayList");
+
+  // ---------- week navigation ----------
+  var weekPickEl = document.getElementById("weekPick");
+  var weekDatesEl = document.getElementById("weekDates");
+  var weekbarEl = document.getElementById("weekbar");
+  var restFromEl = document.getElementById("restFrom");
+
+  function mondayOfWeek(w) {
+    return state.weekOf ? addDays(state.weekOf, (w - 1) * 7) : null;
+  }
+
+  function goToWeek(w) {
+    w = Math.max(1, Math.min(CYCLE_WEEKS, w | 0));
+    curWeek = w;
+    // Repoint the alias at the newly selected week before anything renders.
+    state.placed = state.weeks[curWeek - 1];
+    renderWeekBar();
+    renderAll();
+  }
+
+  function renderWeekBar() {
+    if (!weekPickEl) return;
+
+    if (weekPickEl.options.length !== CYCLE_WEEKS) {
+      weekPickEl.innerHTML = "";
+      for (var i = 1; i <= CYCLE_WEEKS; i++) {
+        var o = document.createElement("option");
+        o.value = String(i);
+        o.textContent = "Week " + i + " of " + CYCLE_WEEKS;
+        weekPickEl.appendChild(o);
+      }
+    }
+    weekPickEl.value = String(curWeek);
+    restFromEl.textContent = String(curWeek);
+
+    var mon = mondayOfWeek(curWeek);
+    if (!mon) {
+      weekDatesEl.textContent = "— set the cycle start date";
+      weekbarEl.classList.remove("holiday-week");
+      return;
+    }
+    var fri = addDays(mon, 4);
+    var count = (state.weeks[curWeek - 1] || []).length;
+    weekDatesEl.textContent = prettyDate(mon) + " – " + prettyDate(fri) +
+      "  ·  " + count + (count === 1 ? " workshop" : " workshops");
+
+    // Flag weeks a holiday falls in, since blocked days drop that day's sessions.
+    var hols = holidaysInCycle(state.weekOf).filter(function (h) {
+      return h.date >= mon && h.date <= fri && blocksScheduling(h.date);
+    });
+    if (hols.length) {
+      weekbarEl.classList.add("holiday-week");
+      weekDatesEl.textContent += "  ·  " + hols.map(function (h) { return h.name; }).join(", ") + " — no sessions that day";
+    } else {
+      weekbarEl.classList.remove("holiday-week");
+    }
+  }
+
+  // Puts the selected week's real dates on the board's day headers, and marks any day
+  // a blocked holiday closes. Without this, every week looks identical while navigating.
+  function renderDayDates() {
+    var mon = mondayOfWeek(curWeek);
+    for (var d = 0; d < 5; d++) {
+      var el = cal.querySelector("[data-date='" + d + "']");
+      var col = dayCols[d];
+      if (!el) continue;
+      if (!mon) {
+        el.textContent = "";
+        el.classList.remove("closed");
+        if (col) col.classList.remove("closed");
+        continue;
+      }
+      var iso = addDays(mon, d);
+      var hol = holidaysInCycle(state.weekOf).find(function (h) { return h.date === iso; });
+      var closed = !!hol && blocksScheduling(iso);
+      el.textContent = closed
+        ? prettyDate(iso).replace(/^\w+ /, "") + " · " + hol.name
+        : prettyDate(iso).replace(/^\w+ /, "");
+      el.classList.toggle("closed", closed);
+      el.title = closed ? hol.name + " — nothing is scheduled on this day" : "";
+      if (col) col.classList.toggle("closed", closed);
+    }
+  }
+
+  document.getElementById("weekPrev").addEventListener("click", function () { goToWeek(curWeek - 1); });
+  document.getElementById("weekNext").addEventListener("click", function () { goToWeek(curWeek + 1); });
+  weekPickEl.addEventListener("change", function () { goToWeek(parseInt(weekPickEl.value, 10)); });
+
+  // Copying is how a repeating rhythm gets set up: build one week, push it across.
+  // Deep copies with fresh ids, so moving a block in week 5 cannot move week 6's.
+  function copyWeekTo(fromWeek, targets) {
+    var src = state.weeks[fromWeek - 1] || [];
+    targets.forEach(function (w) {
+      state.weeks[w - 1] = src.map(function (p) {
+        return {
+          uid: "p" + (state.seq++),
+          refId: p.refId, title: p.title, mins: p.mins,
+          cat: p.cat, day: p.day, start: p.start
+        };
+      });
+    });
+    state.placed = state.weeks[curWeek - 1];
+  }
+
+  document.getElementById("copyToAll").addEventListener("click", function () {
+    var n = (state.weeks[curWeek - 1] || []).length;
+    if (!window.confirm("Copy week " + curWeek + "'s " + n + " workshop" + (n === 1 ? "" : "s") +
+        " to all 14 weeks?\n\nEvery other week's current contents are replaced.")) return;
+    var targets = [];
+    for (var w = 1; w <= CYCLE_WEEKS; w++) if (w !== curWeek) targets.push(w);
+    copyWeekTo(curWeek, targets);
+    save(); renderWeekBar(); renderAll();
+    icsSay("Week " + curWeek + " copied to all 14 weeks.");
+  });
+
+  document.getElementById("copyToRest").addEventListener("click", function () {
+    if (curWeek >= CYCLE_WEEKS) { icsSay("Week 14 is the last week.", true); return; }
+    var n = (state.weeks[curWeek - 1] || []).length;
+    if (!window.confirm("Copy week " + curWeek + "'s " + n + " workshop" + (n === 1 ? "" : "s") +
+        " to weeks " + (curWeek + 1) + "–" + CYCLE_WEEKS + "?\n\nThose weeks' current contents are replaced.")) return;
+    var targets = [];
+    for (var w = curWeek + 1; w <= CYCLE_WEEKS; w++) targets.push(w);
+    copyWeekTo(curWeek, targets);
+    save(); renderWeekBar(); renderAll();
+    icsSay("Week " + curWeek + " copied to weeks " + (curWeek + 1) + "–" + CYCLE_WEEKS + ".");
+  });
 
   function renderCycle() {
     var weekOf = state.weekOf;
@@ -1646,7 +1864,7 @@
       return;
     }
 
-    state.placed = picked.map(function (r) {
+    setPlaced(picked.map(function (r) {
       return {
         uid: "p" + (state.seq++),
         refId: "imp" + state.seq,
@@ -1656,7 +1874,7 @@
         day: r.day,
         start: r.start
       };
-    });
+    }));
 
     if (earliest) {
       var monday = new Date(earliest.getFullYear(), earliest.getMonth(),
@@ -1755,9 +1973,11 @@
   document.getElementById("resetBtn").addEventListener("click", function () {
     if (!window.confirm("Clear the whole board, any custom workshops, and any custom categories?")) return;
     // Keep the cycle setup: clearing the board is not the same as saying it is a
-    // different cycle with different holidays.
+    // different cycle with different holidays. Reset clears all fourteen weeks, not
+    // just the one on screen -- "Reset" meaning "this week only" would be a trap.
     state = { placed: [], custom: [], seq: 1, cats: seedCats(),
-              weekOf: state.weekOf, holidayBlocks: state.holidayBlocks };
+              weekOf: state.weekOf, holidayBlocks: state.holidayBlocks, weeks: null };
+    migrateWeeks();
     save(); renderAll();
   });
 
@@ -2026,30 +2246,6 @@
     var switchBtn = document.getElementById("switchCycleBtn");
     if (switchBtn) switchBtn.addEventListener("click", function () { showChooser(); });
 
-    // The cycle's start anchors all 14 weeks and every event already on the calendar,
-    // so moving it is a deliberate act, not an incidental edit.
-    icsDateEl.addEventListener("change", function () {
-      var v = icsDateEl.value;
-      var d = parseISO(v);
-      if (!d) return;
-      if (d.getUTCDay() !== 1) {
-        window.alert("A cycle has to start on a Monday. " + prettyDate(v) + " is a " + DOW[d.getUTCDay()] + ".");
-        icsDateEl.value = state.weekOf || "";
-        return;
-      }
-      if (state.weekOf && v !== state.weekOf) {
-        if (!window.confirm("Move the whole cycle to start " + prettyDate(v) + "?\n\n" +
-            "All 14 weeks shift, and every event already on the calendar moves with them " +
-            "the next time you publish.")) {
-          icsDateEl.value = state.weekOf;
-          return;
-        }
-      }
-      state.weekOf = v;
-      save();
-      renderCycle();
-    });
-
     newForm.addEventListener("submit", function (e) {
       e.preventDefault();
       chooserErr.textContent = "";
@@ -2179,6 +2375,9 @@
     function applyRemote(next) {
       applyingRemote = true;
       state = next;
+      // Re-point state.placed at the week on screen. Without this the alias still refers
+      // to the previous state's array and edits would land nowhere visible.
+      migrateWeeks();
       try {
         try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
         // The week is shared state, so a remote change has to move this field too --
