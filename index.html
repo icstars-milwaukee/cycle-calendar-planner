@@ -131,6 +131,26 @@
   .sync-pill.live { color: var(--moss); border-color: var(--moss); background: var(--moss-soft); }
   .sync-pill.wait { color: var(--tea); border-color: var(--tea); background: var(--tea-soft); }
   .sync-pill.bad { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+  /* Password gate for the shared board. */
+  .gate {
+    position: fixed; inset: 0; z-index: 50; display: flex;
+    align-items: center; justify-content: center; padding: 20px;
+    background: rgba(35, 36, 31, 0.55); backdrop-filter: blur(3px);
+  }
+  .gate[hidden] { display: none; }
+  .gate-card {
+    background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 12px; box-shadow: var(--shadow); padding: 24px 26px;
+    width: 100%; max-width: 380px;
+  }
+  .gate-card h2 { margin: 0 0 8px; font-size: 17px; }
+  .gate-card p { margin: 0 0 14px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; }
+  .gate-card input[type="password"] {
+    width: 100%; font: inherit; font-size: 13px; padding: 9px 11px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  }
+  .gate-err { min-height: 1.2em; margin: 8px 0 0 !important; color: var(--danger) !important; font-weight: 600; }
+  .gate-row { display: flex; gap: 8px; margin-top: 14px; }
   button {
     font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
     border: 1px solid var(--line); background: var(--surface); color: var(--ink);
@@ -401,6 +421,21 @@
       <span id="icsMsg" class="ics-msg" role="status"></span>
     </div>
   </header>
+
+  <div class="gate" id="gate" hidden>
+    <form class="gate-card" id="gateForm">
+      <h2>Shared board</h2>
+      <p>Enter the team password to join the live board. Without it you can still plan
+         on your own, saved only in this browser.</p>
+      <input type="password" id="gatePw" autocomplete="current-password"
+             aria-label="Team password" placeholder="Password" />
+      <p class="gate-err" id="gateErr" role="alert"></p>
+      <div class="gate-row">
+        <button type="submit" class="primary">Join</button>
+        <button type="button" id="gateSkip">Work offline</button>
+      </div>
+    </form>
+  </div>
 
   <div class="storage-warn" id="storageWarn" role="alert"></div>
 
@@ -1478,10 +1513,11 @@
   // Worker. Everything below is optional: if SYNC_URL is blank, the room is refused,
   // or the socket never opens, the planner keeps working exactly as it did offline
   // against localStorage alone.
-  // Filled in once the Worker is deployed -- its real workers.dev hostname depends on
-  // the Cloudflare account's subdomain. Blank keeps every board offline-only, which is
-  // the safe default: a wrong URL would leave everyone stuck on "Reconnecting…".
-  var SYNC_URL = "";
+  // Sync backend. Blank turns sync off entirely and the planner falls back to being
+  // offline-only, which is also what happens if this host stops answering.
+  // NOTE: this currently points at a Cloudflare *temporary preview* account, which
+  // disappears unless claimed. Repoint it at the permanent Worker once one exists.
+  var SYNC_URL = "https://cycle-calendar-sync.exciting-pegasus.workers.dev";
 
   var syncEl = document.getElementById("syncStatus");
 
@@ -1507,8 +1543,80 @@
     var version = 0;
     var who = "u" + Math.floor(Math.random() * 1e9).toString(36);
 
+    // The password is only ever held in this browser and sent to the Worker over
+    // TLS. It is never written into the page source, which is public.
+    var PW_KEY = STORE_KEY + "-pw";
+    var pw = "";
+    try { pw = localStorage.getItem(PW_KEY) || ""; } catch (e) { pw = ""; }
+
+    var base = SYNC_URL.replace(/\/$/, "");
     function url() {
-      return SYNC_URL.replace(/^http/, "ws").replace(/\/$/, "") + "/room/" + room;
+      return base.replace(/^http/, "ws") + "/room/" + room + "?pw=" + encodeURIComponent(pw);
+    }
+
+    var gate = document.getElementById("gate");
+    var gateForm = document.getElementById("gateForm");
+    var gatePw = document.getElementById("gatePw");
+    var gateErr = document.getElementById("gateErr");
+
+    function showGate(message) {
+      if (!gate) return;
+      gateErr.textContent = message || "";
+      gate.hidden = false;
+      setTimeout(function () { gatePw.focus(); }, 0);
+    }
+
+    function goOffline(note) {
+      closed = true;
+      if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+      if (timer) { clearTimeout(timer); timer = null; }
+      syncStatus("off", "Offline board", note || "Saved only in this browser. Not shared.");
+    }
+
+    // Check the password before opening a socket: a rejected WebSocket handshake
+    // gives the browser no reason code, so "wrong password" would be
+    // indistinguishable from "the network is down".
+    function verify(candidate) {
+      return fetch(base + "/auth?pw=" + encodeURIComponent(candidate), { method: "GET" })
+        .then(function (r) { return r.ok; })
+        .catch(function () { return null; });  // null = could not reach the Worker
+    }
+
+    function start() {
+      syncStatus("wait", "Checking password…", "");
+      verify(pw).then(function (ok) {
+        if (ok === null) {
+          // Worker unreachable. Keep planning locally and retry rather than
+          // blocking the whole board behind a login it cannot validate.
+          syncStatus("bad", "Sync unavailable",
+            "Could not reach the shared board. Your work is still saved in this browser.");
+          if (!timer) timer = setTimeout(function () { timer = null; start(); }, 15000);
+          return;
+        }
+        if (!ok) {
+          try { localStorage.removeItem(PW_KEY); } catch (e) {}
+          syncStatus("off", "Locked", "Enter the team password to join the shared board.");
+          showGate(pw ? "That password was not accepted." : "");
+          return;
+        }
+        try { localStorage.setItem(PW_KEY, pw); } catch (e) {}
+        if (gate) gate.hidden = true;
+        closed = false;
+        connect();
+      });
+    }
+
+    if (gateForm) {
+      gateForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        pw = gatePw.value;
+        gateErr.textContent = "";
+        start();
+      });
+      document.getElementById("gateSkip").addEventListener("click", function () {
+        gate.hidden = true;
+        goOffline("You chose to work offline. Reload to join the shared board.");
+      });
     }
 
     function connect() {
@@ -1570,7 +1678,9 @@
       syncStatus("wait", "Reconnecting…",
         "Lost the shared board. Your edits are still saved in this browser and will " +
         "be sent when the connection returns.");
-      timer = setTimeout(function () { timer = null; connect(); }, wait);
+      // Re-verify on the way back in: the password may have been changed while we
+      // were disconnected, and looping on a dead credential would never recover.
+      timer = setTimeout(function () { timer = null; start(); }, wait);
     }
 
     function applyRemote(next) {
@@ -1597,7 +1707,14 @@
     };
 
     window.addEventListener("beforeunload", function () { closed = true; });
-    connect();
+
+    // No stored password yet: ask before touching the network at all.
+    if (!pw) {
+      syncStatus("off", "Locked", "Enter the team password to join the shared board.");
+      showGate("");
+    } else {
+      start();
+    }
   })();
 
   buildGrid();

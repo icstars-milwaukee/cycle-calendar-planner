@@ -19,6 +19,39 @@ const ALLOWED_ORIGINS = [
 // cannot fill the object's storage.
 const MAX_PLAN_BYTES = 512 * 1024;
 
+/**
+ * Shared-password gate. The password lives in the ROOM_PASSWORD secret, never in
+ * this repository -- the repo is public, so a committed password would be no
+ * password at all. If the secret is missing we deny everything rather than falling
+ * open, so a misconfigured deploy cannot quietly expose the board.
+ */
+function timingSafeEqual(a, b) {
+  const ab = new TextEncoder().encode(a);
+  const bb = new TextEncoder().encode(b);
+  // Compare every byte regardless of mismatch position so failure time does not
+  // leak how much of the password was correct.
+  let diff = ab.length ^ bb.length;
+  const len = Math.max(ab.length, bb.length);
+  for (let i = 0; i < len; i++) diff |= (ab[i] || 0) ^ (bb[i] || 0);
+  return diff === 0;
+}
+
+function authorized(request, env) {
+  if (!env.ROOM_PASSWORD) return false;
+  const url = new URL(request.url);
+  // Browsers cannot set headers on a WebSocket handshake, so the query string is
+  // the only channel available. It travels inside the TLS tunnel.
+  const supplied = url.searchParams.get("pw") || request.headers.get("X-Board-Password") || "";
+  return timingSafeEqual(supplied, env.ROOM_PASSWORD);
+}
+
+function deny(cors) {
+  return new Response(JSON.stringify({ ok: false, error: "Wrong password." }), {
+    status: 401,
+    headers: { ...cors, "Content-Type": "application/json" },
+  });
+}
+
 function corsHeaders(origin) {
   const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
@@ -37,7 +70,18 @@ export default {
 
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
+    // Unauthenticated: reports only that the service is up and whether a password
+    // was ever configured. Never reveals the password or any board content.
     if (url.pathname === "/health") {
+      return new Response(JSON.stringify({ ok: true, locked: !!env.ROOM_PASSWORD }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // Lets the UI tell "wrong password" apart from "network is down" before it
+    // opens a socket, since a failed WebSocket handshake surfaces no useful reason.
+    if (url.pathname === "/auth") {
+      if (!authorized(request, env)) return deny(cors);
       return new Response(JSON.stringify({ ok: true }), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
@@ -47,6 +91,10 @@ export default {
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})(\/plan)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
+
+    // Every route that touches board data is gated, including the upgrade itself,
+    // so an unauthenticated socket is never accepted in the first place.
+    if (!authorized(request, env)) return deny(cors);
 
     const room = match[1];
     const id = env.BOARD.idFromName(room);
