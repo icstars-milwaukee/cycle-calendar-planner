@@ -6,13 +6,19 @@
   "observability": { "enabled": true },
 
   "durable_objects": {
-    "bindings": [{ "name": "BOARD", "class_name": "Board" }]
+    "bindings": [
+      { "name": "BOARD", "class_name": "Board" },
+      // A single instance holding the list of cycles. Durable Objects cannot be
+      // enumerated, so without a registry there is no way to answer "which cycles exist".
+      { "name": "CYCLES", "class_name": "Directory" }
+    ]
   },
 
   // SQLite-backed classes are the only Durable Objects available on the Workers
   // free plan. Using new_classes here instead would deploy fine on a paid account
   // and fail on a free one.
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["Board"] }
+    { "tag": "v1", "new_sqlite_classes": ["Board"] },
+    { "tag": "v2", "new_sqlite_classes": ["Directory"] }
   ]
 }

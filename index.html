@@ -186,6 +186,28 @@
   }
   .gate-err { min-height: 1.2em; margin: 8px 0 0 !important; color: var(--danger) !important; font-weight: 600; }
   .gate-row { display: flex; gap: 8px; margin-top: 14px; }
+  /* Cycle chooser. */
+  .chooser-card { max-width: 520px; max-height: 88vh; overflow-y: auto; }
+  .cycle-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 18px; }
+  .cycle-item {
+    display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+    padding: 11px 13px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--paper); color: var(--ink); cursor: pointer; font: inherit;
+  }
+  .cycle-item:hover { border-color: var(--moss); background: var(--moss-soft); }
+  .cycle-item .ci-name { font-weight: 700; font-size: 13px; }
+  .cycle-item .ci-dates { font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .cycle-item .ci-go { margin-left: auto; color: var(--ink-soft); font-size: 16px; }
+  .cycle-none { font-size: 12px; color: var(--ink-soft); margin: 0 0 16px; }
+  .new-cycle { border-top: 1px solid var(--line); padding-top: 14px; }
+  .new-cycle h3 { margin: 0 0 10px; font-size: 13px; }
+  .new-cycle label { display: block; font-size: 11.5px; font-weight: 600; color: var(--ink-soft); margin: 9px 0 4px; }
+  .new-cycle input {
+    width: 100%; font: inherit; font-size: 13px; padding: 8px 10px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  }
+  .cycle-preview { margin: 10px 0 0 !important; font-size: 12px; color: var(--moss) !important; font-weight: 600; min-height: 1.2em; }
+  .cycle-preview.warn { color: var(--danger) !important; }
   button {
     font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
     border: 1px solid var(--line); background: var(--surface); color: var(--ink);
@@ -434,9 +456,10 @@
     </div>
     <div class="actions">
       <span class="ics-week">
-        Week of
-        <input type="date" id="icsDate" aria-label="Monday the week starts" />
+        Cycle starts
+        <input type="date" id="icsDate" aria-label="Monday the cycle starts" />
       </span>
+      <button id="switchCycleBtn" type="button">Switch cycle</button>
       <span class="ics-week">
         Save as
         <input type="text" id="icsName" class="name-in" aria-label="Export file name"
@@ -472,6 +495,28 @@
         <button type="button" id="gateSkip">Work offline</button>
       </div>
     </form>
+  </div>
+
+  <div class="gate" id="chooser" hidden>
+    <div class="gate-card chooser-card">
+      <h2>Choose a cycle</h2>
+      <p>Each cycle is its own board and its own 14 weeks.</p>
+
+      <div id="cycleList" class="cycle-list"></div>
+
+      <form id="newCycleForm" class="new-cycle">
+        <h3>Start a new cycle</h3>
+        <label for="newCycleName">Name</label>
+        <input type="text" id="newCycleName" maxlength="60" placeholder="Cycle 21" />
+        <label for="newCycleStart">First Monday</label>
+        <input type="date" id="newCycleStart" />
+        <p class="cycle-preview" id="newCyclePreview"></p>
+        <p class="gate-err" id="chooserErr" role="alert"></p>
+        <div class="gate-row">
+          <button type="submit" class="primary">Create cycle</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <div class="storage-warn" id="storageWarn" role="alert"></div>
@@ -1211,12 +1256,8 @@
     state.weekOf = icsDateEl.value;
   })();
 
-  icsDateEl.addEventListener("change", function () {
-    if (!icsDateEl.value) return;
-    state.weekOf = icsDateEl.value;
-    save();
-    renderCycle();
-  });
+  // The guarded handler for this field lives with the cycle logic further down: it has
+  // to enforce a Monday and confirm before shifting all 14 weeks.
 
   // ---------- cycle period and holidays ----------
   // A cycle is always 14 weeks. The board is one week's rhythm and repeats for all of
@@ -1742,7 +1783,10 @@
   (function initSync() {
     // Room comes from #room=<name>. Everyone sharing a link shares a board; anyone
     // who knows the name can edit it, so an unguessable name is the only privacy.
-    var room = (location.hash.match(/room=([A-Za-z0-9_-]{1,64})/) || [])[1] || "cycle21";
+    // Empty means no cycle chosen yet, which sends the user to the chooser. A link
+    // carrying #room= still opens that cycle directly.
+    var room = (location.hash.match(/room=([A-Za-z0-9_-]{1,64})/) || [])[1] || "";
+    var cycleMeta = null;
     var off = /(\?|&)sync=off\b/.test(location.search);
 
     if (!SYNC_URL || off || !("WebSocket" in window)) {
@@ -1897,10 +1941,148 @@
         }
         try { localStorage.setItem(PW_KEY, pw); } catch (e) {}
         if (gate) gate.hidden = true;
+        // A cycle has to be chosen before there is a board to connect to.
+        if (!room) { showChooser(); return; }
         closed = false;
         connect();
       });
     }
+
+    // ----- cycle chooser -----
+    // A cycle is a name plus a first Monday; its 14 weeks follow from that. Creating one
+    // registers it centrally so it can be listed, rather than being invented by whoever
+    // types a URL fragment.
+    var chooser = document.getElementById("chooser");
+    var cycleListEl = document.getElementById("cycleList");
+    var newForm = document.getElementById("newCycleForm");
+    var newName = document.getElementById("newCycleName");
+    var newStart = document.getElementById("newCycleStart");
+    var newPreview = document.getElementById("newCyclePreview");
+    var chooserErr = document.getElementById("chooserErr");
+
+    function enterCycle(c) {
+      room = c.id;
+      cycleMeta = c;
+      try { location.hash = "room=" + c.id; } catch (e) {}
+      chooser.hidden = true;
+      closed = false;
+      connect();
+    }
+
+    function renderCycleList(cycles) {
+      cycleListEl.innerHTML = "";
+      if (!cycles.length) {
+        cycleListEl.innerHTML = "<p class='cycle-none'>No cycles yet. Create the first one below.</p>";
+        return;
+      }
+      cycles.forEach(function (c) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "cycle-item";
+        b.innerHTML = "<span><span class='ci-name'></span><br><span class='ci-dates'>" +
+          prettyDate(c.start) + " – " + prettyDate(c.end) + " · 14 weeks</span></span>" +
+          "<span class='ci-go'>→</span>";
+        b.querySelector(".ci-name").textContent = c.name;
+        b.addEventListener("click", function () { enterCycle(c); });
+        cycleListEl.appendChild(b);
+      });
+    }
+
+    function showChooser() {
+      chooser.hidden = false;
+      chooserErr.textContent = "";
+      cycleListEl.innerHTML = "<p class='cycle-none'>Loading…</p>";
+      fetch(base + "/cycles?pw=" + encodeURIComponent(pw))
+        .then(function (r) { return r.json(); })
+        .then(function (j) { renderCycleList((j && j.cycles) || []); })
+        .catch(function () {
+          cycleListEl.innerHTML = "<p class='cycle-none'>Could not reach the server to list cycles.</p>";
+        });
+      // Default to the next Monday so the common case is one click.
+      if (!newStart.value) {
+        var now = new Date();
+        var monday = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() + ((8 - now.getDay()) % 7 || 7)));
+        newStart.value = isoUTC(monday);
+      }
+      previewCycle();
+    }
+
+    function previewCycle() {
+      var v = newStart.value;
+      if (!v) { newPreview.textContent = ""; return; }
+      var d = parseISO(v);
+      if (!d) { newPreview.textContent = ""; return; }
+      if (d.getUTCDay() !== 1) {
+        newPreview.className = "cycle-preview warn";
+        newPreview.textContent = prettyDate(v) + " is a " + DOW[d.getUTCDay()] + ". A cycle must start on a Monday.";
+        return;
+      }
+      newPreview.className = "cycle-preview";
+      newPreview.textContent = "Week 1 " + prettyDate(v) + "  →  week 14 ends " + prettyDate(cycleEndOf(v));
+    }
+    newStart.addEventListener("change", previewCycle);
+    newStart.addEventListener("input", previewCycle);
+
+    var switchBtn = document.getElementById("switchCycleBtn");
+    if (switchBtn) switchBtn.addEventListener("click", function () { showChooser(); });
+
+    // The cycle's start anchors all 14 weeks and every event already on the calendar,
+    // so moving it is a deliberate act, not an incidental edit.
+    icsDateEl.addEventListener("change", function () {
+      var v = icsDateEl.value;
+      var d = parseISO(v);
+      if (!d) return;
+      if (d.getUTCDay() !== 1) {
+        window.alert("A cycle has to start on a Monday. " + prettyDate(v) + " is a " + DOW[d.getUTCDay()] + ".");
+        icsDateEl.value = state.weekOf || "";
+        return;
+      }
+      if (state.weekOf && v !== state.weekOf) {
+        if (!window.confirm("Move the whole cycle to start " + prettyDate(v) + "?\n\n" +
+            "All 14 weeks shift, and every event already on the calendar moves with them " +
+            "the next time you publish.")) {
+          icsDateEl.value = state.weekOf;
+          return;
+        }
+      }
+      state.weekOf = v;
+      save();
+      renderCycle();
+    });
+
+    newForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      chooserErr.textContent = "";
+      var nm = newName.value.trim();
+      var st = newStart.value;
+      if (!nm) { chooserErr.textContent = "Give the cycle a name."; return; }
+      var d = parseISO(st);
+      if (!d) { chooserErr.textContent = "Pick the first Monday."; return; }
+      if (d.getUTCDay() !== 1) { chooserErr.textContent = "A cycle has to start on a Monday."; return; }
+
+      var btn = newForm.querySelector("button[type=submit]");
+      btn.disabled = true;
+      btn.textContent = "Creating…";
+      fetch(base + "/cycles?pw=" + encodeURIComponent(pw), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nm, start: st, by: who }),
+      }).then(function (r) { return r.json().then(function (j) { return { status: r.status, j: j }; }); })
+        .then(function (res) {
+          btn.disabled = false;
+          btn.textContent = "Create cycle";
+          if (!res.j || !res.j.ok) {
+            chooserErr.textContent = (res.j && res.j.error) || "Could not create that cycle.";
+            return;
+          }
+          enterCycle(res.j.cycle);
+        })
+        .catch(function () {
+          btn.disabled = false;
+          btn.textContent = "Create cycle";
+          chooserErr.textContent = "Could not reach the server.";
+        });
+    });
 
     if (gateForm) {
       gateForm.addEventListener("submit", function (e) {
@@ -2032,6 +2214,17 @@
     } else {
       start();
     }
+
+    // Opening a link for a different cycle should switch boards, not sit on the old one.
+    window.addEventListener("hashchange", function () {
+      var next = (location.hash.match(/room=([A-Za-z0-9_-]{1,64})/) || [])[1] || "";
+      if (!next || next === room) return;
+      room = next;
+      if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+      version = 0;
+      closed = false;
+      connect();
+    });
   })();
 
   buildGrid();

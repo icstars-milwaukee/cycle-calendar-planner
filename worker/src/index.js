@@ -382,10 +382,16 @@ export default {
       });
     }
 
+    // The cycle registry. GET lists cycles, POST creates one.
+    if (url.pathname === "/cycles") {
+      if (!authorized(request, env)) return deny(cors);
+      return env.CYCLES.get(env.CYCLES.idFromName("directory")).fetch(request);
+    }
+
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(
-      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack)?$/);
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -397,6 +403,99 @@ export default {
     return env.BOARD.get(id).fetch(request);
   },
 };
+
+/**
+ * The list of cycles.
+ *
+ * A cycle is a name plus a start Monday; its 14 weeks follow from that and are not
+ * separately editable. Keeping the start here rather than only inside a board means
+ * "Cycle 21 starts 31 August" is a fact about the cycle, not a field someone can nudge
+ * while dragging workshops around.
+ */
+export class Directory {
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+
+  async list() {
+    return (await this.ctx.storage.get("cycles")) || [];
+  }
+
+  async fetch(request) {
+    const origin = request.headers.get("Origin") || "";
+    const cors = corsHeaders(origin);
+    const json = (body, status) => new Response(JSON.stringify(body), {
+      status: status || 200, headers: { ...cors, "Content-Type": "application/json" },
+    });
+
+    const cycles = await this.list();
+
+    if (request.method === "GET") {
+      return json({
+        ok: true,
+        cycleWeeks: CYCLE_WEEKS,
+        cycles: cycles.map((c) => ({ ...c, end: cycleEnd(c.start) })),
+      });
+    }
+
+    if (request.method !== "POST") return json({ ok: false, error: "Unsupported method." }, 405);
+
+    let body;
+    try { body = await request.json(); } catch (e) { return json({ ok: false, error: "Body was not JSON." }, 400); }
+
+    const name = String(body.name || "").trim();
+    const start = String(body.start || "").trim();
+
+    if (!name) return json({ ok: false, error: "Give the cycle a name, for example \"Cycle 21\"." }, 400);
+    if (name.length > 60) return json({ ok: false, error: "That name is too long." }, 400);
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+      return json({ ok: false, error: "Give a start date as YYYY-MM-DD." }, 400);
+    }
+    const startDate = new Date(start + "T00:00:00Z");
+    if (isNaN(startDate.getTime()) || isoOf(startDate) !== start) {
+      return json({ ok: false, error: "That is not a real date." }, 400);
+    }
+    // Week 1 Monday anchors every date in the cycle; a non-Monday start would put
+    // "Monday" blocks on a Tuesday for all 14 weeks.
+    if (startDate.getUTCDay() !== 1) {
+      return json({ ok: false, error: "A cycle has to start on a Monday." }, 400);
+    }
+
+    // Slug becomes the room name and lives in URLs, so keep it conservative.
+    let id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+    if (!id) id = "cycle";
+    if (cycles.some((c) => c.id === id)) {
+      return json({ ok: false, error: "A cycle called \"" + name + "\" already exists.", id }, 409);
+    }
+
+    const cycle = {
+      id,
+      name,
+      start,
+      weeks: CYCLE_WEEKS,
+      createdAt: new Date().toISOString(),
+      createdBy: String(body.by || "").slice(0, 40) || null,
+    };
+    cycles.push(cycle);
+    cycles.sort((a, b) => a.start.localeCompare(b.start));
+    await this.ctx.storage.put("cycles", cycles);
+
+    // Seed the board so its week matches the cycle from the moment it is opened,
+    // rather than depending on whoever connects first to set it.
+    try {
+      const board = this.env.BOARD.get(this.env.BOARD.idFromName(id));
+      await board.fetch(new Request("https://do/room/" + id + "/init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekOf: start }),
+      }));
+    } catch (e) { /* the board will still pick the week up from the record on open */ }
+
+    return json({ ok: true, cycle: { ...cycle, end: cycleEnd(start) } }, 201);
+  }
+}
 
 export class Board {
   constructor(ctx, env) {
@@ -413,6 +512,24 @@ export class Board {
     // need it. Remember it, since WebSocket handlers get no URL to read it from.
     const room = (url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})/) || [])[1] || "board";
     if ((await this.ctx.storage.get("room")) !== room) await this.ctx.storage.put("room", room);
+
+    // Called once when a cycle is created. Only ever sets the week on an empty board,
+    // so it can never overwrite a board people are already working in.
+    if (url.pathname.endsWith("/init")) {
+      let body = {};
+      try { body = await request.json(); } catch (e) { /* treated as empty */ }
+      const existing = (await this.ctx.storage.get("plan")) || null;
+      if (!existing && /^\d{4}-\d{2}-\d{2}$/.test(body.weekOf || "")) {
+        await this.ctx.storage.put({
+          plan: { placed: [], custom: [], seq: 1, cats: [], weekOf: body.weekOf },
+          version: 1,
+          updated: new Date().toISOString(),
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
 
     if (url.pathname.endsWith("/sync-plan")) {
       const published = (await this.ctx.storage.get("published")) || null;
