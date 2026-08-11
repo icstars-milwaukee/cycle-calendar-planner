@@ -494,7 +494,7 @@ export default {
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(
-      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile)?$/);
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -676,6 +676,18 @@ export class Board {
       });
     }
 
+    // Asks the flow to look at the calendar now. Used by the planner's "Check calendar"
+    // button so someone can confirm the schedule is live without waiting for a publish.
+    if (url.pathname.endsWith("/check")) {
+      if (request.method !== "POST") {
+        return new Response("POST required", { status: 405, headers: cors });
+      }
+      this.ctx.waitUntil(this.notifyFlow(room, new Date().toISOString()));
+      return new Response(JSON.stringify({ ok: true, asked: true }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
     // Forgets which Graph events belong to this board, without touching the calendar.
     // Used after a purge, so the next sync rebuilds from nothing rather than trying to
     // update events that were deleted underneath it.
@@ -728,6 +740,24 @@ export class Board {
       }
       const published = (await this.ctx.storage.get("published")) || null;
       const result = reconcile(published, room, body.events || body.value || []);
+
+      // Remember what the calendar actually looked like. This is the only moment anything
+      // observes it, so it is the only basis for telling someone whether their schedule
+      // is really live rather than merely published.
+      await this.ctx.storage.put("lastReconcile", {
+        at: new Date().toISOString(),
+        ok: result.ok !== false,
+        error: result.error || null,
+        inspected: result.inspected || 0,
+        ours: result.ours || 0,
+        foreign: result.foreign || 0,
+        create: (result.create || []).length,
+        update: (result.update || []).length,
+        delete: (result.delete || []).length,
+        changes: result.changes || 0,
+      });
+      this.ctx.waitUntil(this.broadcastPublishState(room));
+
       return new Response(JSON.stringify(result), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
@@ -835,6 +865,11 @@ export class Board {
       publishedAt,
       everPublished: !!published,
       pending: pendingChanges(plan, published, room || "board"),
+      groupName: (plan && plan.groupName) || null,
+      groupChosen: !!(plan && plan.groupId),
+      // What the calendar itself last looked like, and when.
+      calendar: (await this.ctx.storage.get("lastReconcile")) || null,
+      lastNotify: (await this.ctx.storage.get("lastNotify")) || null,
     };
   }
 

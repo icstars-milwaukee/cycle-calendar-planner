@@ -142,6 +142,21 @@
   .pub-pill.dirty { color: var(--tea); border-color: var(--tea); border-style: solid; background: var(--tea-soft); }
   .pub-pill.blocked { color: var(--danger); border-color: var(--danger); border-style: solid; background: var(--danger-soft); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* The plain-language answer to "is the group calendar actually right?" -- stated from
+     what was last observed on the calendar, never inferred from having pressed Publish. */
+  .calstate {
+    flex-basis: 100%; margin-top: 8px; padding: 10px 13px; border-radius: 8px;
+    font-size: 12.5px; line-height: 1.5; border: 1px solid var(--line);
+    background: var(--paper); color: var(--ink-soft);
+  }
+  .calstate b { color: var(--ink); }
+  .calstate .cs-head { display: block; font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+  .calstate.live { border-color: var(--moss); background: var(--moss-soft); }
+  .calstate.live .cs-head { color: var(--moss); }
+  .calstate.working { border-color: var(--tea); background: var(--tea-soft); }
+  .calstate.working .cs-head { color: var(--tea); }
+  .calstate.stale { border-color: var(--danger); background: var(--danger-soft); }
+  .calstate.stale .cs-head { color: var(--danger); }
   /* Publishing is the one action that matters, so it stops competing with eight peers. */
   .actions-spacer { flex: 1; }
   button.publish {
@@ -515,8 +530,10 @@
     </div>
     <div class="actions">
       <button id="publishBtn" class="publish" type="button" disabled>Publish to calendar</button>
+      <button id="checkBtn" type="button" disabled>Check calendar</button>
       <span id="publishState" class="pub-pill" role="status">Calendar not connected</span>
       <span id="syncStatus" class="sync-pill off" role="status">Offline board</span>
+      <div class="calstate" id="calState"></div>
 
       <span class="actions-spacer"></span>
 
@@ -2157,7 +2174,27 @@
     // someone deliberately publishes. Nothing dragged reaches Outlook on its own.
     var publishBtn = document.getElementById("publishBtn");
     var publishEl = document.getElementById("publishState");
+    var calStateEl = document.getElementById("calState");
+    var checkBtn = document.getElementById("checkBtn");
     var publishing = false;
+
+    // Asks the flow to look at the calendar and report back, so "is it actually right?"
+    // can be answered on demand rather than only after publishing.
+    if (checkBtn) {
+      checkBtn.addEventListener("click", function () {
+        checkBtn.disabled = true;
+        checkBtn.textContent = "Checking…";
+        fetch(base + "/room/" + room + "/check?pw=" + encodeURIComponent(pw), { method: "POST" })
+          .then(function () { icsSay("Asked the calendar sync to run. The status updates when it reports back."); })
+          .catch(function () { icsSay("Could not reach the sync service.", true); })
+          .then(function () {
+            setTimeout(function () {
+              checkBtn.disabled = false;
+              checkBtn.textContent = "Check calendar";
+            }, 4000);
+          });
+      });
+    }
 
     function ago(iso) {
       if (!iso) return "";
@@ -2170,8 +2207,66 @@
       return days + (days === 1 ? " day ago" : " days ago");
     }
 
+    // Says, in plain words, whether the group calendar is actually right. Deliberately
+    // built from the last time the calendar was *observed*, not from whether someone
+    // pressed Publish -- publishing only records intent, the flow is what carries it out.
+    function showCalendar(s) {
+      if (!calStateEl || !s) return;
+      var cal = s.calendar;
+      var p = s.pending || {};
+      var unpublished = p.ready !== false && p.total > 0;
+
+      function box(cls, head, detail) {
+        calStateEl.className = "calstate " + cls;
+        calStateEl.innerHTML = "<span class='cs-head'></span><span class='cs-detail'></span>";
+        calStateEl.querySelector(".cs-head").textContent = head;
+        calStateEl.querySelector(".cs-detail").innerHTML = detail;
+      }
+
+      if (!s.groupChosen) {
+        box("stale", "No group chosen",
+          "Nothing reaches Outlook yet. Pick the group under <b>More → Publishes to</b>.");
+        return;
+      }
+      var where = s.groupName ? "<b>" + s.groupName + "</b>" : "the group calendar";
+
+      if (!s.everPublished) {
+        box("stale", "Never published",
+          "The board exists only here. Press <b>Publish to calendar</b> to send it to " + where + ".");
+        return;
+      }
+      if (!cal) {
+        box("working", "Waiting for the first sync",
+          "Published, but " + where + " has not been checked yet. This normally takes under a minute.");
+        return;
+      }
+      if (cal.ok === false) {
+        box("stale", "Sync could not run", (cal.error || "The last attempt failed.") +
+          " Last tried " + ago(cal.at) + ".");
+        return;
+      }
+      if (cal.changes > 0) {
+        box("working", "Calendar is catching up",
+          "Last checked " + ago(cal.at) + ": <b>" + cal.create + "</b> to add, <b>" + cal.update +
+          "</b> to correct, <b>" + cal.delete + "</b> to remove on " + where + "." +
+          " Press <b>Check calendar</b> once it has had a minute.");
+        return;
+      }
+      if (unpublished) {
+        box("working", "Calendar matches the last publish",
+          where + " is correct as of " + ago(s.publishedAt) + ", but the board has moved on since. " +
+          "<b>" + p.total + "</b> change" + (p.total === 1 ? "" : "s") + " will not appear until you publish again.");
+        return;
+      }
+      box("live", "Calendar is live and correct",
+        "Verified against " + where + " " + ago(cal.at) + ". " +
+        cal.ours + " event" + (cal.ours === 1 ? "" : "s") + " in place, nothing pending." +
+        (cal.foreign ? " " + cal.foreign + " other event" + (cal.foreign === 1 ? "" : "s") + " on that calendar were left alone." : ""));
+    }
+
     function showPublish(s) {
       if (!publishEl || !s) return;
+      showCalendar(s);
       var p = s.pending || {};
 
       if (p.ready === false) {
@@ -2183,6 +2278,7 @@
       }
 
       publishBtn.disabled = publishing;
+      if (checkBtn) checkBtn.disabled = !s.everPublished;
 
       if (!s.everPublished) {
         publishEl.className = "pub-pill dirty";
