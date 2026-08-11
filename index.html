@@ -110,6 +110,14 @@
   .actions label.holds-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-soft); cursor: pointer; }
   .ics-msg { flex-basis: 100%; font-size: 11.5px; color: var(--moss); min-height: 1.2em; }
   .ics-msg.err { color: var(--danger); }
+  /* Storage trouble banner. Hidden unless a save or load actually fails. */
+  .storage-warn {
+    display: none; margin: 0 0 14px; padding: 11px 14px; border-radius: 8px;
+    border: 1px solid var(--danger); background: var(--danger-soft); color: var(--ink);
+    font-size: 12.5px; line-height: 1.5;
+  }
+  .storage-warn.show { display: block; }
+  .storage-warn b { color: var(--danger); }
   button {
     font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
     border: 1px solid var(--line); background: var(--surface); color: var(--ink);
@@ -372,10 +380,15 @@
       <button id="importBtn" type="button">Import .ics</button>
       <input type="file" id="icsFile" accept=".ics,text/calendar,text/plain" hidden />
       <button id="exportBtn" type="button">Copy schedule</button>
+      <button id="backupBtn" type="button">Backup (.json)</button>
+      <button id="restoreBtn" type="button">Restore</button>
+      <input type="file" id="backupFile" accept=".json,application/json" hidden />
       <button id="resetBtn" type="button">Reset</button>
       <span id="icsMsg" class="ics-msg" role="status"></span>
     </div>
   </header>
+
+  <div class="storage-warn" id="storageWarn" role="alert"></div>
 
   <div class="stats" id="stats"></div>
 
@@ -531,21 +544,75 @@
   // Shelf starts empty — workshops are added via the "Add a Cycle 21 workshop" form.
   var WORKSHOPS = [];
 
+  // Storage is best-effort: localStorage can be full, disabled by browser policy, or
+  // blocked by cookie settings. Every one of those used to fail silently, so the board
+  // kept working while nothing was written. Surface it instead of swallowing it.
+  // These must be initialised before the load() call below, which reports through them.
+  var BACKUP_KEY = STORE_KEY + "-backup";
+  var warnEl = document.getElementById("storageWarn");
+  var warned = false;
+
   var state = load() || { placed: [], custom: [], seq: 1, cats: seedCats() };
   if (!Array.isArray(state.cats) || !state.cats.length) state.cats = seedCats();
 
-  function load() {
-    try {
-      var raw = localStorage.getItem(STORE_KEY);
-      if (!raw) return null;
-      var s = JSON.parse(raw);
-      if (!s || !Array.isArray(s.placed) || !Array.isArray(s.custom)) return null;
-      if (!Array.isArray(s.cats) || !s.cats.length) s.cats = seedCats();
-      return s;
-    } catch (e) { return null; }
+  function warnStorage(html) {
+    if (!warnEl) return;
+    warnEl.innerHTML = html;
+    warnEl.classList.add("show");
   }
+
+  function parsePlan(raw) {
+    var s = JSON.parse(raw);
+    if (!s || !Array.isArray(s.placed) || !Array.isArray(s.custom)) return null;
+    if (!Array.isArray(s.cats) || !s.cats.length) s.cats = seedCats();
+    if (typeof s.seq !== "number" || s.seq < 1) s.seq = 1;
+    return s;
+  }
+
+  function load() {
+    var raw;
+    try {
+      raw = localStorage.getItem(STORE_KEY);
+    } catch (e) {
+      warnStorage("<b>This browser is blocking local storage.</b> The planner still works, " +
+        "but nothing will be saved when you close the tab. Use <b>Backup (.json)</b> to keep your work.");
+      warned = true;
+      return null;
+    }
+    if (!raw) return null;
+
+    try {
+      var s = parsePlan(raw);
+      if (s) return s;
+    } catch (e) { /* fall through to recovery below */ }
+
+    // The stored plan is unreadable. Preserve it under a backup key rather than letting
+    // the next save overwrite it, and say so — silently booting empty looks like data loss.
+    try {
+      if (!localStorage.getItem(BACKUP_KEY)) localStorage.setItem(BACKUP_KEY, raw);
+    } catch (e) {}
+    warnStorage("<b>Your saved plan could not be read</b>, so the board started empty. " +
+      "The unreadable copy was kept under <code>" + BACKUP_KEY + "</code> in this browser's " +
+      "local storage in case it can be recovered — it will not be overwritten.");
+    warned = true;
+    return null;
+  }
+
   function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      if (warned) { warnEl.classList.remove("show"); warned = false; }
+      return true;
+    } catch (e) {
+      var full = e && (e.name === "QuotaExceededError" || e.code === 22);
+      warnStorage("<b>Changes are not being saved.</b> " + (full
+        ? "This browser's storage for the site is full."
+        : "This browser is blocking local storage (private window, or a cookie/site-data policy).") +
+        " Your board is still on screen, but it will be lost when you close the tab — " +
+        "use <b>Backup (.json)</b> now to save it to a file.");
+      warned = true;
+      return false;
+    }
   }
 
   function findItem(refId) {
@@ -1338,6 +1405,45 @@
     } else {
       window.prompt("Copy the schedule:", text);
     }
+  });
+
+  // ---------- backup / restore ----------
+  // "Copy schedule" emits a human-readable summary and .ics carries only placed blocks.
+  // Neither round-trips custom workshops, categories or seq, so neither is a real backup.
+  // This writes the whole state object and reads it straight back.
+  document.getElementById("backupBtn").addEventListener("click", function () {
+    var payload = { kind: "tf-cycle-planner", key: STORE_KEY, saved: new Date().toISOString(), state: state };
+    var name = (exportName() || "cycle21-week").replace(/[\\/:*?"<>|]+/g, "-") + "-backup.json";
+    var url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+    var a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    icsSay("Backed up to " + name + ".");
+  });
+
+  var backupFileEl = document.getElementById("backupFile");
+  document.getElementById("restoreBtn").addEventListener("click", function () { backupFileEl.click(); });
+  backupFileEl.addEventListener("change", function () {
+    var file = backupFileEl.files && backupFileEl.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      backupFileEl.value = "";
+      var restored = null;
+      try {
+        var payload = JSON.parse(reader.result);
+        // Accept both the wrapped backup file and a bare state object.
+        restored = parsePlan(JSON.stringify(payload && payload.state ? payload.state : payload));
+      } catch (e) { restored = null; }
+      if (!restored) { icsSay("That file is not a planner backup.", true); return; }
+      if (!window.confirm("Replace the current board with this backup? Anything on screen now is lost.")) return;
+      state = restored;
+      save(); renderAll();
+      icsSay("Restored " + state.placed.length + " workshop" + (state.placed.length === 1 ? "" : "s") + ".");
+    };
+    reader.onerror = function () { backupFileEl.value = ""; icsSay("Could not read that file.", true); };
+    reader.readAsText(file);
   });
 
   document.getElementById("resetBtn").addEventListener("click", function () {
