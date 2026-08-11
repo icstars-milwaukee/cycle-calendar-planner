@@ -60,7 +60,79 @@ function authorized(request, env) {
  */
 const CAL_TZ = "America/Chicago";
 
+// A cycle is always 14 weeks. This is a property of the programme, not a setting:
+// the board describes one week's rhythm and that rhythm runs for the whole cycle.
+const CYCLE_WEEKS = 14;
+
 function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+// ---------- holidays ----------
+// Computed rather than listed so a cycle in any year works without maintenance.
+// All arithmetic is on the UTC calendar so a server timezone can never shift a date.
+
+function isoOf(d) {
+  return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate());
+}
+function utc(y, m, d) { return new Date(Date.UTC(y, m, d)); }
+
+// n-th given weekday of a month, 1-based. weekday: 0 = Sunday.
+function nthWeekday(year, month, weekday, n) {
+  const first = utc(year, month, 1);
+  const shift = (weekday - first.getUTCDay() + 7) % 7;
+  return utc(year, month, 1 + shift + (n - 1) * 7);
+}
+function lastWeekday(year, month, weekday) {
+  const last = utc(year, month + 1, 0);
+  const shift = (last.getUTCDay() - weekday + 7) % 7;
+  return utc(year, month, last.getUTCDate() - shift);
+}
+
+// Federal holidays on a fixed date move when they land on a weekend: Saturday is
+// observed the Friday before, Sunday the Monday after. Without this, a cycle would
+// keep scheduling through the day the office is actually shut.
+function observed(d) {
+  const day = d.getUTCDay();
+  if (day === 6) return utc(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - 1);
+  if (day === 0) return utc(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+  return d;
+}
+
+function federalHolidays(year) {
+  return [
+    { name: "New Year's Day", date: observed(utc(year, 0, 1)) },
+    { name: "Martin Luther King Jr. Day", date: nthWeekday(year, 0, 1, 3) },
+    { name: "Presidents' Day", date: nthWeekday(year, 1, 1, 3) },
+    { name: "Memorial Day", date: lastWeekday(year, 4, 1) },
+    { name: "Juneteenth", date: observed(utc(year, 5, 19)) },
+    { name: "Independence Day", date: observed(utc(year, 6, 4)) },
+    { name: "Labor Day", date: nthWeekday(year, 8, 1, 1) },
+    { name: "Indigenous Peoples' Day", date: nthWeekday(year, 9, 1, 2) },
+    { name: "Veterans Day", date: observed(utc(year, 10, 11)) },
+    { name: "Thanksgiving Day", date: nthWeekday(year, 10, 4, 4) },
+    { name: "Day after Thanksgiving", date: utc(year, 10, nthWeekday(year, 10, 4, 4).getUTCDate() + 1) },
+    { name: "Christmas Day", date: observed(utc(year, 11, 25)) },
+  ].map((h) => ({ name: h.name, date: isoOf(h.date) }));
+}
+
+// Every holiday between two ISO dates inclusive. A 14-week cycle can straddle a year
+// boundary, so both years are considered.
+function holidaysBetween(startISO, endISO) {
+  const y0 = +startISO.slice(0, 4);
+  const y1 = +endISO.slice(0, 4);
+  const out = [];
+  for (let y = y0; y <= y1; y++) {
+    for (const h of federalHolidays(y)) {
+      if (h.date >= startISO && h.date <= endISO) out.push(h);
+    }
+  }
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return out;
+}
+
+// The last weekday of the cycle: Friday of week 14.
+function cycleEnd(weekOf) {
+  return addDaysISO(weekOf, (CYCLE_WEEKS - 1) * 7 + 4);
+}
 
 // Days are added on the UTC calendar so a host timezone can never shift the date.
 function addDaysISO(mondayISO, days) {
@@ -89,30 +161,62 @@ function toEvents(plan, room) {
 
   const cats = Array.isArray(plan.cats) ? plan.cats : [];
   const catName = (id) => (cats.find((c) => c.id === id) || {}).name || "";
+  const prefix = "cycle-planner-" + (room || "board") + "-";
 
-  const events = (plan.placed || []).map((p) => {
-    const date = addDaysISO(plan.weekOf, p.day);
-    if (!date) return null;
-    return {
-      // Stable across pushes: the same block keeps the same id for its whole life,
-      // so a bridge can update or delete rather than creating duplicates.
-      uid: "cycle-planner-" + (room || "board") + "-" + p.id,
-      subject: p.title,
-      category: catName(p.cat || (p.refId ? (plan.custom || []).find((c) => c.id === p.refId) || {} : {}).cat),
-      start: { dateTime: date + "T" + hhmm(p.start), timeZone: CAL_TZ },
-      end: { dateTime: date + "T" + hhmm(p.start + p.mins), timeZone: CAL_TZ },
-      day: p.day,
-      minutes: p.mins,
-    };
-  }).filter(Boolean);
+  const endISO = cycleEnd(plan.weekOf);
+  const holidays = holidaysBetween(plan.weekOf, endISO);
+
+  // A holiday blocks scheduling unless it has been explicitly unblocked. Defaulting to
+  // blocked is the safe direction: forgetting to mark one leaves an empty day on the
+  // calendar, while the opposite books sessions on a day the office is closed.
+  const blocks = plan.holidayBlocks || {};
+  const blocked = new Set(holidays.filter((h) => blocks[h.date] !== false).map((h) => h.date));
+
+  const events = [];
+
+  // The board is one week's rhythm; the cycle repeats it. Each occurrence gets its own
+  // uid so a single week can be suppressed for a holiday without disturbing the rest.
+  for (let w = 0; w < CYCLE_WEEKS; w++) {
+    for (const p of plan.placed || []) {
+      const date = addDaysISO(plan.weekOf, w * 7 + p.day);
+      if (!date) continue;
+      if (blocked.has(date)) continue;
+      events.push({
+        uid: prefix + p.id + "-w" + (w + 1),
+        subject: p.title,
+        category: catName(p.cat || (p.refId ? (plan.custom || []).find((c) => c.id === p.refId) || {} : {}).cat),
+        start: { dateTime: date + "T" + hhmm(p.start), timeZone: CAL_TZ },
+        end: { dateTime: date + "T" + hhmm(p.start + p.mins), timeZone: CAL_TZ },
+        week: w + 1,
+        day: p.day,
+        minutes: p.mins,
+      });
+    }
+  }
+
+  for (const h of holidays) {
+    events.push({
+      uid: prefix + "holiday-" + h.date,
+      subject: h.name,
+      category: "Holiday",
+      isAllDay: true,
+      // Graph treats an all-day event as a half-open range, so it ends the next midnight.
+      start: { dateTime: h.date + "T00:00:00", timeZone: CAL_TZ },
+      end: { dateTime: addDaysISO(h.date, 1) + "T00:00:00", timeZone: CAL_TZ },
+      blocksScheduling: blocked.has(h.date),
+    });
+  }
 
   // Deterministic order so a diff between two pushes is meaningful.
-  events.sort((a, b) => (a.day - b.day) || a.start.dateTime.localeCompare(b.start.dateTime));
+  events.sort((a, b) => a.start.dateTime.localeCompare(b.start.dateTime) || a.uid.localeCompare(b.uid));
 
   return {
     ok: true,
     weekOf: plan.weekOf,
+    cycleWeeks: CYCLE_WEEKS,
+    cycleEnd: endISO,
     timeZone: CAL_TZ,
+    holidays: holidays.map((h) => ({ ...h, blocksScheduling: blocked.has(h.date) })),
     count: events.length,
     events,
   };
@@ -162,7 +266,8 @@ function pendingChanges(livePlan, publishedPlan, room) {
 // Content fingerprint. Only the fields a calendar actually shows are included, so
 // unrelated board edits do not churn the calendar with pointless updates.
 function eventHash(ev) {
-  const basis = [ev.subject, ev.start.dateTime, ev.end.dateTime, ev.start.timeZone, ev.category].join("|");
+  const basis = [ev.subject, ev.start.dateTime, ev.end.dateTime, ev.start.timeZone,
+                 ev.category, ev.isAllDay ? "allday" : ""].join("|");
   let h = 5381;
   for (let i = 0; i < basis.length; i++) h = ((h << 5) + h + basis.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
@@ -174,9 +279,11 @@ function graphBody(ev) {
     subject: ev.subject,
     start: ev.start,
     end: ev.end,
+    isAllDay: !!ev.isAllDay,
     body: {
       contentType: "text",
       content: "Cycle Calendar Planner" + (ev.category ? " - " + ev.category : "") +
+        (ev.week ? "\nWeek " + ev.week + " of " + CYCLE_WEEKS : "") +
         "\nDo not edit here; edit the planner and it will be overwritten on the next sync." +
         "\nref: " + ev.uid,
     },

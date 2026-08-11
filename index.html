@@ -142,6 +142,30 @@
   .pub-pill.dirty { color: var(--tea); border-color: var(--tea); border-style: solid; background: var(--tea-soft); }
   .pub-pill.blocked { color: var(--danger); border-color: var(--danger); border-style: solid; background: var(--danger-soft); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* Cycle period and holidays. */
+  .cycle {
+    border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+    margin: 0 0 14px; overflow: hidden;
+  }
+  .cycle > summary {
+    cursor: pointer; padding: 10px 14px; font-size: 12.5px; font-weight: 700;
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  }
+  .cycle-range { font-weight: 500; color: var(--ink-soft); font-size: 12px; }
+  .cycle-body { padding: 0 14px 14px; }
+  .cycle-note { margin: 0 0 12px; font-size: 12px; color: var(--ink-soft); line-height: 1.55; }
+  .holiday-list { display: flex; flex-direction: column; gap: 6px; }
+  .holiday {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--paper); font-size: 12px;
+  }
+  .holiday .hol-date { font-variant-numeric: tabular-nums; color: var(--ink-soft); min-width: 116px; }
+  .holiday .hol-name { font-weight: 600; flex: 1; min-width: 140px; }
+  .holiday .hol-week { color: var(--ink-soft); font-size: 11.5px; }
+  .holiday label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+  .holiday.blocked { border-color: var(--danger); background: var(--danger-soft); }
+  .holiday-empty { font-size: 12px; color: var(--ink-soft); }
   /* Password gate for the shared board. */
   .gate {
     position: fixed; inset: 0; z-index: 50; display: flex;
@@ -451,6 +475,18 @@
   </div>
 
   <div class="storage-warn" id="storageWarn" role="alert"></div>
+
+  <details class="cycle" id="cyclePanel" open>
+    <summary>Cycle period <span class="cycle-range" id="cycleRange"></span></summary>
+    <div class="cycle-body">
+      <p class="cycle-note">
+        A cycle is always <b>14 weeks</b>. The board above is one week's rhythm and it
+        repeats for the whole cycle. Holidays below are published to the calendar; the ones
+        marked <b>blocked</b> have no workshops scheduled on them.
+      </p>
+      <div id="holidayList" class="holiday-list"></div>
+    </div>
+  </details>
 
   <div class="stats" id="stats"></div>
 
@@ -1027,7 +1063,7 @@
     legendEl.innerHTML = html;
   }
 
-  function renderAll() { renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); }
+  function renderAll() { renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -1179,7 +1215,154 @@
     if (!icsDateEl.value) return;
     state.weekOf = icsDateEl.value;
     save();
+    renderCycle();
   });
+
+  // ---------- cycle period and holidays ----------
+  // A cycle is always 14 weeks. The board is one week's rhythm and repeats for all of
+  // them, so a holiday cannot be represented on the board itself -- Labor Day is only
+  // Monday of one particular week. It is handled here, per date, instead.
+  //
+  // This mirrors the same computation in the Worker, which is authoritative when
+  // publishing. Both must agree; the tests check them against each other.
+  var CYCLE_WEEKS = 14;
+
+  function isoUTC(d) {
+    return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate());
+  }
+  function utcDate(y, m, d) { return new Date(Date.UTC(y, m, d)); }
+  function parseISO(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+    return m ? utcDate(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+  function addDays(iso, n) {
+    var d = parseISO(iso);
+    if (!d) return null;
+    d.setUTCDate(d.getUTCDate() + n);
+    return isoUTC(d);
+  }
+  function nthWeekdayUTC(y, mo, wd, n) {
+    var first = utcDate(y, mo, 1);
+    var shift = (wd - first.getUTCDay() + 7) % 7;
+    return utcDate(y, mo, 1 + shift + (n - 1) * 7);
+  }
+  function lastWeekdayUTC(y, mo, wd) {
+    var last = utcDate(y, mo + 1, 0);
+    var shift = (last.getUTCDay() - wd + 7) % 7;
+    return utcDate(y, mo, last.getUTCDate() - shift);
+  }
+  // Saturday holidays are observed the Friday before, Sunday holidays the Monday after.
+  function observedUTC(d) {
+    var day = d.getUTCDay();
+    if (day === 6) return utcDate(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - 1);
+    if (day === 0) return utcDate(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+    return d;
+  }
+  function federalHolidays(y) {
+    var thanksgiving = nthWeekdayUTC(y, 10, 4, 4);
+    return [
+      { name: "New Year's Day", date: observedUTC(utcDate(y, 0, 1)) },
+      { name: "Martin Luther King Jr. Day", date: nthWeekdayUTC(y, 0, 1, 3) },
+      { name: "Presidents' Day", date: nthWeekdayUTC(y, 1, 1, 3) },
+      { name: "Memorial Day", date: lastWeekdayUTC(y, 4, 1) },
+      { name: "Juneteenth", date: observedUTC(utcDate(y, 5, 19)) },
+      { name: "Independence Day", date: observedUTC(utcDate(y, 6, 4)) },
+      { name: "Labor Day", date: nthWeekdayUTC(y, 8, 1, 1) },
+      { name: "Indigenous Peoples' Day", date: nthWeekdayUTC(y, 9, 1, 2) },
+      { name: "Veterans Day", date: observedUTC(utcDate(y, 10, 11)) },
+      { name: "Thanksgiving Day", date: thanksgiving },
+      { name: "Day after Thanksgiving", date: utcDate(y, 10, thanksgiving.getUTCDate() + 1) },
+      { name: "Christmas Day", date: observedUTC(utcDate(y, 11, 25)) }
+    ].map(function (h) { return { name: h.name, date: isoUTC(h.date) }; });
+  }
+  function cycleEndOf(weekOf) { return addDays(weekOf, (CYCLE_WEEKS - 1) * 7 + 4); }
+
+  function holidaysInCycle(weekOf) {
+    if (!weekOf) return [];
+    var end = cycleEndOf(weekOf);
+    var out = [];
+    for (var y = +weekOf.slice(0, 4); y <= +end.slice(0, 4); y++) {
+      federalHolidays(y).forEach(function (h) {
+        if (h.date >= weekOf && h.date <= end) out.push(h);
+      });
+    }
+    out.sort(function (a, b) { return a.date.localeCompare(b.date); });
+    return out;
+  }
+
+  function blocksScheduling(dateISO) {
+    return !state.holidayBlocks || state.holidayBlocks[dateISO] !== false;
+  }
+
+  var DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  function prettyDate(iso) {
+    var d = parseISO(iso);
+    if (!d) return iso;
+    return DOW[d.getUTCDay()].slice(0, 3) + " " +
+      ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()] +
+      " " + d.getUTCDate() + ", " + d.getUTCFullYear();
+  }
+  function weekIndexOf(iso, weekOf) {
+    var a = parseISO(weekOf), b = parseISO(iso);
+    if (!a || !b) return null;
+    return Math.floor((b - a) / 604800000) + 1;
+  }
+
+  var cycleRangeEl = document.getElementById("cycleRange");
+  var holidayListEl = document.getElementById("holidayList");
+
+  function renderCycle() {
+    var weekOf = state.weekOf;
+    if (!weekOf) {
+      cycleRangeEl.textContent = "— pick the Monday the cycle starts";
+      holidayListEl.innerHTML = "<p class='holiday-empty'>Set the start date to see holidays.</p>";
+      return;
+    }
+    var end = cycleEndOf(weekOf);
+    cycleRangeEl.textContent = "· 14 weeks · " + prettyDate(weekOf) + " – " + prettyDate(end);
+
+    var list = holidaysInCycle(weekOf);
+    if (!list.length) {
+      holidayListEl.innerHTML = "<p class='holiday-empty'>No public holidays fall inside this cycle.</p>";
+      return;
+    }
+
+    holidayListEl.innerHTML = "";
+    list.forEach(function (h) {
+      var on = blocksScheduling(h.date);
+      var row = document.createElement("div");
+      row.className = "holiday" + (on ? " blocked" : "");
+
+      var wk = weekIndexOf(h.date, weekOf);
+      var d = parseISO(h.date);
+      var weekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
+
+      row.innerHTML =
+        "<span class='hol-date'>" + prettyDate(h.date) + "</span>" +
+        "<span class='hol-name'></span>" +
+        "<span class='hol-week'>" + (weekend ? "weekend" : "week " + wk) + "</span>";
+      row.querySelector(".hol-name").textContent = h.name;
+
+      var label = document.createElement("label");
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = on;
+      cb.setAttribute("aria-label", "Block scheduling on " + h.name);
+      cb.addEventListener("change", function () {
+        if (!state.holidayBlocks) state.holidayBlocks = {};
+        // Only deviations from the default are stored, keeping the board small.
+        if (cb.checked) delete state.holidayBlocks[h.date];
+        else state.holidayBlocks[h.date] = false;
+        save();
+        renderCycle();
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode("block scheduling"));
+      row.appendChild(label);
+
+      holidayListEl.appendChild(row);
+    });
+  }
 
   // ---------- export naming ----------
   var icsNameEl = document.getElementById("icsName");
@@ -1530,8 +1713,10 @@
 
   document.getElementById("resetBtn").addEventListener("click", function () {
     if (!window.confirm("Clear the whole board, any custom workshops, and any custom categories?")) return;
-    // Keep the week: clearing the board is not the same as saying it is a different week.
-    state = { placed: [], custom: [], seq: 1, cats: seedCats(), weekOf: state.weekOf };
+    // Keep the cycle setup: clearing the board is not the same as saying it is a
+    // different cycle with different holidays.
+    state = { placed: [], custom: [], seq: 1, cats: seedCats(),
+              weekOf: state.weekOf, holidayBlocks: state.holidayBlocks };
     save(); renderAll();
   });
 
