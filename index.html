@@ -1513,11 +1513,10 @@
   // Worker. Everything below is optional: if SYNC_URL is blank, the room is refused,
   // or the socket never opens, the planner keeps working exactly as it did offline
   // against localStorage alone.
-  // Sync backend. Blank turns sync off entirely and the planner falls back to being
-  // offline-only, which is also what happens if this host stops answering.
-  // NOTE: this currently points at a Cloudflare *temporary preview* account, which
-  // disappears unless claimed. Repoint it at the permanent Worker once one exists.
-  var SYNC_URL = "https://cycle-calendar-sync.exciting-pegasus.workers.dev";
+  // Sync backend: the Worker in worker/, deployed to the i.c.stars Cloudflare account.
+  // Blank turns sync off entirely and the planner falls back to being offline-only,
+  // which is also what happens on its own if this host stops answering.
+  var SYNC_URL = "https://cycle-calendar-sync.icstars-milwaukee.workers.dev";
 
   var syncEl = document.getElementById("syncStatus");
 
