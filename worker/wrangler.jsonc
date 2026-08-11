@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cycle-calendar-sync",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true },
+
+  "durable_objects": {
+    "bindings": [{ "name": "BOARD", "class_name": "Board" }]
+  },
+
+  // SQLite-backed classes are the only Durable Objects available on the Workers
+  // free plan. Using new_classes here instead would deploy fine on a paid account
+  // and fail on a free one.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Board"] }
+  ]
+}
