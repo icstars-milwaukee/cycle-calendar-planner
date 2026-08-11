@@ -122,6 +122,83 @@ function toEvents(snapshot, room) {
   };
 }
 
+/**
+ * Reconciliation against a Microsoft 365 Group calendar.
+ *
+ * Microsoft Graph has no application permission for group calendars, so the push has
+ * to run as a signed-in member -- in practice a Power Automate flow. Flows are a poor
+ * place for diffing logic, so the Worker does it here and hands the flow three flat
+ * lists to loop over.
+ *
+ * The Worker remembers which Graph event each block became, keyed by the block's
+ * stable uid. That mapping is what makes a re-push an update instead of a duplicate.
+ */
+
+// Content fingerprint. Only the fields a calendar actually shows are included, so
+// unrelated board edits do not churn the calendar with pointless updates.
+function eventHash(ev) {
+  const basis = [ev.subject, ev.start.dateTime, ev.end.dateTime, ev.start.timeZone, ev.category].join("|");
+  let h = 5381;
+  for (let i = 0; i < basis.length; i++) h = ((h << 5) + h + basis.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+// Shaped so a flow can hand it to "Create group event" with no transformation.
+function graphBody(ev) {
+  return {
+    subject: ev.subject,
+    start: ev.start,
+    end: ev.end,
+    body: {
+      contentType: "text",
+      content: "Cycle Calendar Planner" + (ev.category ? " - " + ev.category : "") +
+        "\nDo not edit here; edit the planner and it will be overwritten on the next sync." +
+        "\nref: " + ev.uid,
+    },
+  };
+}
+
+function buildSyncPlan(snapshot, room, pushed) {
+  const projection = toEvents(snapshot, room);
+
+  // No week means no dates. Returning empty lists rather than an error with deletions
+  // matters: an unset week must never be read as "the board is empty, remove everything".
+  if (!projection.ok) {
+    return { ok: false, error: projection.error, create: [], update: [], delete: [], version: projection.version };
+  }
+
+  const live = new Map(projection.events.map((e) => [e.uid, e]));
+  const create = [];
+  const update = [];
+  const remove = [];
+
+  for (const ev of projection.events) {
+    const prior = pushed[ev.uid];
+    const hash = eventHash(ev);
+    if (!prior) {
+      create.push({ uid: ev.uid, hash, event: graphBody(ev) });
+    } else if (prior.hash !== hash) {
+      update.push({ uid: ev.uid, hash, eventId: prior.graphId, event: graphBody(ev) });
+    }
+  }
+
+  for (const uid of Object.keys(pushed)) {
+    if (!live.has(uid)) remove.push({ uid, eventId: pushed[uid].graphId });
+  }
+
+  return {
+    ok: true,
+    weekOf: projection.weekOf,
+    timeZone: projection.timeZone,
+    version: projection.version,
+    create,
+    update,
+    delete: remove,
+    // Lets a flow skip its loops entirely when the calendar is already correct.
+    changes: create.length + update.length + remove.length,
+  };
+}
+
 function deny(cors) {
   return new Response(JSON.stringify({ ok: false, error: "Wrong password." }), {
     status: 401,
@@ -166,7 +243,8 @@ export default {
 
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
-    const match = url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events)?$/);
+    const match = url.pathname.match(
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -189,6 +267,54 @@ export class Board {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
     const cors = corsHeaders(origin);
+
+    if (url.pathname.endsWith("/sync-plan")) {
+      const room = (url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})/) || [])[1] || "board";
+      const snapshot = await this.snapshot();
+      const pushed = (await this.ctx.storage.get("pushed")) || {};
+      return new Response(JSON.stringify(buildSyncPlan(snapshot, room, pushed)), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // The flow reports back what Graph actually accepted. Recording it only after the
+    // fact means a failed or half-finished run just retries next time instead of
+    // leaving the Worker believing in events that were never created.
+    if (url.pathname.endsWith("/sync-ack")) {
+      if (request.method !== "POST") {
+        return new Response("POST required", { status: 405, headers: cors });
+      }
+      let body;
+      try { body = await request.json(); } catch (e) {
+        return new Response(JSON.stringify({ ok: false, error: "Body was not JSON." }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+
+      const pushed = (await this.ctx.storage.get("pushed")) || {};
+      let created = 0, updated = 0, removed = 0;
+
+      for (const row of Array.isArray(body.created) ? body.created : []) {
+        if (!row || !row.uid || !row.eventId) continue;
+        pushed[row.uid] = { graphId: String(row.eventId), hash: String(row.hash || "") };
+        created++;
+      }
+      for (const row of Array.isArray(body.updated) ? body.updated : []) {
+        if (!row || !row.uid || !pushed[row.uid]) continue;
+        pushed[row.uid].hash = String(row.hash || "");
+        if (row.eventId) pushed[row.uid].graphId = String(row.eventId);
+        updated++;
+      }
+      for (const row of Array.isArray(body.deleted) ? body.deleted : []) {
+        const uid = row && (row.uid || row);
+        if (uid && pushed[uid]) { delete pushed[uid]; removed++; }
+      }
+
+      await this.ctx.storage.put({ pushed, lastSync: new Date().toISOString() });
+      return new Response(JSON.stringify({ ok: true, created, updated, deleted: removed, tracked: Object.keys(pushed).length }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
 
     if (url.pathname.endsWith("/events")) {
       const room = (url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})/) || [])[1] || "board";
