@@ -142,6 +142,41 @@
   .pub-pill.dirty { color: var(--tea); border-color: var(--tea); border-style: solid; background: var(--tea-soft); }
   .pub-pill.blocked { color: var(--danger); border-color: var(--danger); border-style: solid; background: var(--danger-soft); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* Publishing is the one action that matters, so it stops competing with eight peers. */
+  .actions-spacer { flex: 1; }
+  button.publish {
+    background: var(--moss); color: var(--paper); border-color: var(--moss);
+    font-size: 13px; padding: 9px 18px;
+  }
+  button.publish:hover:not(:disabled) { filter: brightness(1.08); }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  /* Everything occasional lives behind one disclosure instead of the header bar. */
+  .tools { position: relative; }
+  .tools > summary {
+    cursor: pointer; list-style: none; font-size: 12.5px; font-weight: 600;
+    border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px;
+    background: var(--surface); color: var(--ink); user-select: none;
+  }
+  .tools > summary::-webkit-details-marker { display: none; }
+  .tools > summary::after { content: " ▾"; color: var(--ink-soft); }
+  .tools[open] > summary { border-color: var(--moss); }
+  .tools-body {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 290px;
+    display: flex; flex-direction: column; gap: 8px; align-items: stretch;
+    padding: 14px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--surface); box-shadow: var(--shadow);
+  }
+  .tools-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    font-size: 12px; font-weight: 600; color: var(--ink-soft);
+  }
+  .tools-row input, .tools-row select {
+    font: inherit; font-size: 12.5px; padding: 6px 8px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+    max-width: 165px;
+  }
+  .tools-note { margin: 0 !important; font-size: 11.5px; color: var(--ink-soft) !important; line-height: 1.45; }
+  .tools-sep { border-top: 1px solid var(--line); margin: 3px 0; }
   /* Week navigator. */
   .weekbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -479,29 +514,53 @@
       with <b>Import .ics</b> to pick the board back up.</p>
     </div>
     <div class="actions">
-      <span class="ics-week">
-        Cycle starts
-        <input type="date" id="icsDate" aria-label="Monday the cycle starts" />
-      </span>
-      <button id="switchCycleBtn" type="button">Switch cycle</button>
-      <span class="ics-week">
-        Save as
-        <input type="text" id="icsName" class="name-in" aria-label="Export file name"
-               maxlength="70" placeholder="cycle21-week" />
-        <span class="ext">.ics</span>
-      </span>
-      <label class="holds-opt"><input type="checkbox" id="icsHolds" checked /> include holds</label>
-      <button id="icsBtn" class="primary" type="button">Export to Outlook (.ics)</button>
-      <button id="importBtn" type="button">Import .ics</button>
-      <input type="file" id="icsFile" accept=".ics,text/calendar,text/plain" hidden />
-      <button id="exportBtn" type="button">Copy schedule</button>
-      <button id="backupBtn" type="button">Backup (.json)</button>
-      <button id="restoreBtn" type="button">Restore</button>
-      <input type="file" id="backupFile" accept=".json,application/json" hidden />
-      <button id="resetBtn" type="button">Reset</button>
-      <button id="publishBtn" class="primary" type="button" disabled>Publish to calendar</button>
+      <button id="publishBtn" class="publish" type="button" disabled>Publish to calendar</button>
       <span id="publishState" class="pub-pill" role="status">Calendar not connected</span>
       <span id="syncStatus" class="sync-pill off" role="status">Offline board</span>
+
+      <span class="actions-spacer"></span>
+
+      <button id="switchCycleBtn" type="button">Switch cycle</button>
+
+      <details class="tools" id="toolsMenu">
+        <summary>More</summary>
+        <div class="tools-body">
+          <label class="tools-row">
+            Cycle starts
+            <input type="date" id="icsDate" aria-label="Monday the cycle starts" />
+          </label>
+          <label class="tools-row">
+            Publishes to
+            <select id="groupPick" aria-label="Microsoft 365 group to publish to"></select>
+          </label>
+          <p class="tools-note" id="groupNote"></p>
+
+          <div class="tools-sep"></div>
+
+          <button id="backupBtn" type="button">Backup board (.json)</button>
+          <button id="restoreBtn" type="button">Restore from backup</button>
+          <input type="file" id="backupFile" accept=".json,application/json" hidden />
+
+          <div class="tools-sep"></div>
+
+          <p class="tools-note">Manual export, for when the calendar sync is unavailable.</p>
+          <label class="tools-row">
+            File name
+            <input type="text" id="icsName" class="name-in" aria-label="Export file name"
+                   maxlength="70" placeholder="cycle21-week" />
+          </label>
+          <label class="holds-opt"><input type="checkbox" id="icsHolds" checked /> include holds</label>
+          <button id="icsBtn" type="button">Export .ics</button>
+          <button id="importBtn" type="button">Import .ics</button>
+          <input type="file" id="icsFile" accept=".ics,text/calendar,text/plain" hidden />
+          <button id="exportBtn" type="button">Copy schedule as text</button>
+
+          <div class="tools-sep"></div>
+
+          <button id="resetBtn" class="danger" type="button">Clear all 14 weeks</button>
+        </div>
+      </details>
+
       <span id="icsMsg" class="ics-msg" role="status"></span>
     </div>
   </header>
@@ -1177,7 +1236,7 @@
     legendEl.innerHTML = html;
   }
 
-  function renderAll() { renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); }
+  function renderAll() { renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -1443,6 +1502,69 @@
 
   var cycleRangeEl = document.getElementById("cycleRange");
   var holidayListEl = document.getElementById("holidayList");
+
+  // ---------- which group this cycle publishes to ----------
+  // The page cannot ask Microsoft directly: it is static, unauthenticated, and getting a
+  // Graph token would need admin consent. The flow can, so it posts the list of groups it
+  // can see to the Worker and this reads it back. Until it has run once, there is nothing
+  // to choose from -- which the note below says out loud rather than showing an empty box.
+  var groupPickEl = document.getElementById("groupPick");
+  var groupNoteEl = document.getElementById("groupNote");
+  var knownGroups = [];
+
+  function renderGroupPick() {
+    if (!groupPickEl) return;
+    groupPickEl.innerHTML = "";
+
+    var none = document.createElement("option");
+    none.value = "";
+    none.textContent = knownGroups.length ? "— choose a group —" : "— none loaded yet —";
+    groupPickEl.appendChild(none);
+
+    knownGroups.forEach(function (g) {
+      var o = document.createElement("option");
+      o.value = g.id;
+      o.textContent = g.name;
+      groupPickEl.appendChild(o);
+    });
+
+    // Keep showing a group chosen before the list loaded, rather than silently dropping it.
+    if (state.groupId && !knownGroups.some(function (g) { return g.id === state.groupId; })) {
+      var o2 = document.createElement("option");
+      o2.value = state.groupId;
+      o2.textContent = state.groupName || "(selected group)";
+      groupPickEl.appendChild(o2);
+    }
+    groupPickEl.value = state.groupId || "";
+
+    if (!groupNoteEl) return;
+    if (!knownGroups.length) {
+      groupNoteEl.textContent = "Groups appear once the calendar sync has run once.";
+    } else if (!state.groupId) {
+      groupNoteEl.textContent = "Nothing publishes until a group is chosen.";
+    } else {
+      groupNoteEl.textContent = "This cycle publishes to " + (state.groupName || state.groupId) + ".";
+    }
+  }
+
+  if (groupPickEl) {
+    groupPickEl.addEventListener("change", function () {
+      var id = groupPickEl.value;
+      var g = knownGroups.filter(function (x) { return x.id === id; })[0];
+      state.groupId = id || null;
+      state.groupName = g ? g.name : null;
+      save();
+      renderGroupPick();
+      icsSay(id ? "Publishing to " + (g ? g.name : id) + "." : "No group selected — publishing is off.");
+    });
+  }
+
+  function loadGroups(base, pw) {
+    return fetch(base + "/groups?pw=" + encodeURIComponent(pw))
+      .then(function (r) { return r.json(); })
+      .then(function (j) { knownGroups = (j && j.groups) || []; renderGroupPick(); })
+      .catch(function () { /* leave the picker as-is; the note already explains */ });
+  }
 
   // ---------- week navigation ----------
   var weekPickEl = document.getElementById("weekPick");
@@ -1976,7 +2098,8 @@
     // different cycle with different holidays. Reset clears all fourteen weeks, not
     // just the one on screen -- "Reset" meaning "this week only" would be a trap.
     state = { placed: [], custom: [], seq: 1, cats: seedCats(),
-              weekOf: state.weekOf, holidayBlocks: state.holidayBlocks, weeks: null };
+              weekOf: state.weekOf, holidayBlocks: state.holidayBlocks, weeks: null,
+              groupId: state.groupId, groupName: state.groupName };
     migrateWeeks();
     save(); renderAll();
   });
@@ -2091,6 +2214,13 @@
           icsSay("Not connected to the shared board, so there is nothing to publish from.", true);
           return;
         }
+        if (!state.groupId) {
+          icsSay("Choose which group this cycle publishes to first — it is under More.", true);
+          var menu = document.getElementById("toolsMenu");
+          if (menu) menu.open = true;
+          if (groupPickEl) groupPickEl.focus();
+          return;
+        }
         var note = publishEl && publishEl.textContent ? " (" + publishEl.textContent + ")" : "";
         if (!window.confirm("Publish this board to the Group calendar?" + note +
             "\n\nEveryone's calendar will be updated on the next sync.")) return;
@@ -2161,6 +2291,7 @@
         }
         try { localStorage.setItem(PW_KEY, pw); } catch (e) {}
         if (gate) gate.hidden = true;
+        loadGroups(base, pw);
         // A cycle has to be chosen before there is a board to connect to.
         if (!room) { showChooser(); return; }
         closed = false;

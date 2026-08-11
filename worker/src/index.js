@@ -484,7 +484,9 @@ export default {
     }
 
     // The cycle registry. GET lists cycles, POST creates one.
-    if (url.pathname === "/cycles") {
+    // /groups holds the Microsoft 365 groups the flow can see, so the planner can offer
+    // a real choice instead of a group name compiled into the flow.
+    if (url.pathname === "/cycles" || url.pathname === "/groups") {
       if (!authorized(request, env)) return deny(cors);
       return env.CYCLES.get(env.CYCLES.idFromName("directory")).fetch(request);
     }
@@ -529,6 +531,48 @@ export class Directory {
     const json = (body, status) => new Response(JSON.stringify(body), {
       status: status || 200, headers: { ...cors, "Content-Type": "application/json" },
     });
+
+    // The planner cannot call Microsoft Graph -- it is a static page with no sign-in, and
+    // getting one would need admin consent. The flow can, using the connection that
+    // already exists, so it posts the list here and the planner reads it back.
+    if (new URL(request.url).pathname === "/groups") {
+      if (request.method === "GET") {
+        return json({
+          ok: true,
+          groups: (await this.ctx.storage.get("groups")) || [],
+          updatedAt: (await this.ctx.storage.get("groupsUpdatedAt")) || null,
+        });
+      }
+      if (request.method !== "POST") return json({ ok: false, error: "Unsupported method." }, 405);
+
+      let payload;
+      try { payload = await request.json(); } catch (e) { return json({ ok: false, error: "Body was not JSON." }, 400); }
+      const incoming = Array.isArray(payload.groups) ? payload.groups : (payload.value || []);
+      const groups = incoming
+        .map((g) => ({
+          id: String(g.id || "").slice(0, 64),
+          name: String(g.displayName || g.name || "").slice(0, 120),
+          mail: String(g.mail || "").slice(0, 160),
+        }))
+        .filter((g) => g.id && g.name);
+      groups.sort((a, b) => a.name.localeCompare(b.name));
+
+      // An empty list almost certainly means the lookup failed rather than that the
+      // account belongs to nothing; keeping the previous list avoids emptying the
+      // planner's picker on a transient error.
+      if (!groups.length) {
+        // Deliberate clearing has to be explicit, so a failed lookup cannot empty the
+        // picker while a genuine reset is still possible.
+        if (new URL(request.url).searchParams.get("clear") === "1") {
+          await this.ctx.storage.put({ groups: [], groupsUpdatedAt: new Date().toISOString() });
+          return json({ ok: true, cleared: true });
+        }
+        return json({ ok: true, kept: ((await this.ctx.storage.get("groups")) || []).length, note: "empty list ignored" });
+      }
+
+      await this.ctx.storage.put({ groups, groupsUpdatedAt: new Date().toISOString() });
+      return json({ ok: true, stored: groups.length });
+    }
 
     const cycles = await this.list();
 
@@ -663,6 +707,10 @@ export class Board {
         // A day either side so timezone handling at the boundaries cannot hide an event.
         start: addDaysISO(plan.weekOf, -1) + "T00:00:00",
         end: addDaysISO(cycleEnd(plan.weekOf), 2) + "T00:00:00",
+        // Which group this cycle publishes to. Null means nobody has chosen one yet, and
+        // the flow should refresh the group list and stop rather than guess a calendar.
+        groupId: plan.groupId || null,
+        groupName: plan.groupName || null,
       }), { headers: { ...cors, "Content-Type": "application/json" } });
     }
 
