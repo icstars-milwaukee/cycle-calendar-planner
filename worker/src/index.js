@@ -45,6 +45,83 @@ function authorized(request, env) {
   return timingSafeEqual(supplied, env.ROOM_PASSWORD);
 }
 
+/**
+ * Projects a stored board into concrete calendar events.
+ *
+ * The board itself is weekday-relative ("Tuesday, 10:00, 60 minutes"), which is why
+ * plan.weekOf exists: it pins the board to a real Monday so a date can be computed.
+ * Without it there is no answer to "what date is this block on" and nothing can be
+ * pushed to a calendar, so this returns an explicit error rather than guessing.
+ *
+ * Times are emitted as local wall-clock plus an IANA zone, matching Microsoft Graph's
+ * dateTimeTimeZone shape so a bridge can forward them without conversion. Sending
+ * local time avoids a whole class of daylight-saving bugs: 9am stays 9am across the
+ * March and November transitions, which a fixed UTC offset would silently shift.
+ */
+const CAL_TZ = "America/Chicago";
+
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+// Days are added on the UTC calendar so a host timezone can never shift the date.
+function addDaysISO(mondayISO, days) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(mondayISO || "");
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate());
+}
+
+function hhmm(minutesOfDay) {
+  const m = Math.max(0, Math.min(24 * 60 - 1, Math.round(minutesOfDay)));
+  return pad2(Math.floor(m / 60)) + ":" + pad2(m % 60) + ":00";
+}
+
+function toEvents(snapshot, room) {
+  const plan = snapshot.plan;
+  if (!plan) return { ok: true, weekOf: null, events: [], version: snapshot.version };
+  if (!plan.weekOf) {
+    return {
+      ok: false,
+      error: "This board has no week set. Pick the Monday it starts in the planner before syncing.",
+      weekOf: null,
+      events: [],
+      version: snapshot.version,
+    };
+  }
+
+  const cats = Array.isArray(plan.cats) ? plan.cats : [];
+  const catName = (id) => (cats.find((c) => c.id === id) || {}).name || "";
+
+  const events = (plan.placed || []).map((p) => {
+    const date = addDaysISO(plan.weekOf, p.day);
+    if (!date) return null;
+    return {
+      // Stable across pushes: the same block keeps the same id for its whole life,
+      // so a bridge can update or delete rather than creating duplicates.
+      uid: "cycle-planner-" + (room || "board") + "-" + p.id,
+      subject: p.title,
+      category: catName(p.cat || (p.refId ? (plan.custom || []).find((c) => c.id === p.refId) || {} : {}).cat),
+      start: { dateTime: date + "T" + hhmm(p.start), timeZone: CAL_TZ },
+      end: { dateTime: date + "T" + hhmm(p.start + p.mins), timeZone: CAL_TZ },
+      day: p.day,
+      minutes: p.mins,
+    };
+  }).filter(Boolean);
+
+  // Deterministic order so a diff between two pushes is meaningful.
+  events.sort((a, b) => (a.day - b.day) || a.start.dateTime.localeCompare(b.start.dateTime));
+
+  return {
+    ok: true,
+    weekOf: plan.weekOf,
+    timeZone: CAL_TZ,
+    version: snapshot.version,
+    updated: snapshot.updated,
+    count: events.length,
+    events,
+  };
+}
+
 function deny(cors) {
   return new Response(JSON.stringify({ ok: false, error: "Wrong password." }), {
     status: 401,
@@ -89,7 +166,7 @@ export default {
 
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
-    const match = url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})(\/plan)?$/);
+    const match = url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -112,6 +189,14 @@ export class Board {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
     const cors = corsHeaders(origin);
+
+    if (url.pathname.endsWith("/events")) {
+      const room = (url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})/) || [])[1] || "board";
+      const snapshot = await this.snapshot();
+      return new Response(JSON.stringify(toEvents(snapshot, room)), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
 
     if (url.pathname.endsWith("/plan")) {
       const snapshot = await this.snapshot();

@@ -1148,12 +1148,25 @@
 
   // ---------- ics export ----------
   var icsDateEl = document.getElementById("icsDate");
+
+  // The week the board represents is part of the shared board, not a per-browser
+  // preference. A calendar needs real dates, and the board only stores weekdays --
+  // if everyone picked their own Monday there would be no single answer to what
+  // date a block falls on, and two people would push different weeks.
   (function initIcsDate() {
+    if (state.weekOf) { icsDateEl.value = state.weekOf; return; }
     var now = new Date();
     var monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + ((8 - now.getDay()) % 7));
     var p = function (n) { return (n < 10 ? "0" : "") + n; };
     icsDateEl.value = monday.getFullYear() + "-" + p(monday.getMonth() + 1) + "-" + p(monday.getDate());
+    state.weekOf = icsDateEl.value;
   })();
+
+  icsDateEl.addEventListener("change", function () {
+    if (!icsDateEl.value) return;
+    state.weekOf = icsDateEl.value;
+    save();
+  });
 
   // ---------- export naming ----------
   var icsNameEl = document.getElementById("icsName");
@@ -1504,7 +1517,8 @@
 
   document.getElementById("resetBtn").addEventListener("click", function () {
     if (!window.confirm("Clear the whole board, any custom workshops, and any custom categories?")) return;
-    state = { placed: [], custom: [], seq: 1, cats: seedCats() };
+    // Keep the week: clearing the board is not the same as saying it is a different week.
+    state = { placed: [], custom: [], seq: 1, cats: seedCats(), weekOf: state.weekOf };
     save(); renderAll();
   });
 
@@ -1687,6 +1701,12 @@
       state = next;
       try {
         try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+        // The week is shared state, so a remote change has to move this field too --
+        // otherwise the date box would silently disagree with the board it describes.
+        if (state.weekOf && icsDateEl && icsDateEl.value !== state.weekOf) {
+          icsDateEl.value = state.weekOf;
+          if (typeof refreshAutoName === "function") refreshAutoName();
+        }
         renderAll();
       } finally { applyingRemote = false; }
     }
