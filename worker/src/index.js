@@ -721,7 +721,7 @@ export default {
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(
-      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe|\/ids|\/log)?$/);
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe|\/ids|\/log|\/tamper-test)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -976,6 +976,28 @@ export class Board {
       });
     }
 
+    // Guard drill: makes the next sync delete ONE event the board still wants, exactly
+    // as if someone removed it in Outlook. The guard's next heartbeat must put it back.
+    // Self-neutralizing by design -- the deletion cannot outlive one heartbeat.
+    if (url.pathname.endsWith("/tamper-test")) {
+      if (request.method !== "POST") {
+        return new Response("POST required", { status: 405, headers: cors });
+      }
+      const ids = (await this.ctx.storage.get("idMap")) || {};
+      const uids = Object.keys(ids).filter((u) => !/holiday|hold-|weekev/.test(u));
+      if (!uids.length) {
+        return new Response(JSON.stringify({ ok: false, error: "No tracked workshop events to test with." }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      const victim = uids[uids.length - 1];   // a late-cycle session, least disruptive
+      await this.ctx.storage.put("tamperOnce", victim);
+      this.ctx.waitUntil(this.notifyFlow(room, new Date().toISOString(), true));
+      return new Response(JSON.stringify({ ok: true, victim }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
     // Forgets which Graph events belong to this board, without touching the calendar.
     // Used after a purge, so the next sync rebuilds from nothing rather than trying to
     // update events that were deleted underneath it.
@@ -1028,6 +1050,15 @@ export class Board {
       }
       const published = (await this.ctx.storage.get("published")) || null;
       const result = reconcile(published, room, body.events || body.value || []);
+
+      // An armed guard drill: inject the deletion of one wanted event into this run's
+      // plan, then disarm immediately so it can never fire twice.
+      const tamper = await this.ctx.storage.get("tamperOnce");
+      if (tamper && result.ok && result.known && result.known[tamper]) {
+        result.delete.push({ uid: tamper, eventId: result.known[tamper], reason: "guard drill" });
+        result.changes = (result.changes || 0) + 1;
+        await this.ctx.storage.delete("tamperOnce");
+      }
 
       // Remember what the calendar actually looked like. This is the only moment anything
       // observes it, so it is the only basis for telling someone whether their schedule
