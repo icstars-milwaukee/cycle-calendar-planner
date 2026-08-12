@@ -207,6 +207,11 @@ function toEvents(plan, room) {
 
   const events = [];
 
+  // Weeks that opt out of the daily skeleton entirely -- a team week or off-site is
+  // one banner, not All Skate and tea service. Also all in person: no Teams links.
+  // 1-based week numbers.
+  const skipHolds = new Set(Array.isArray(plan.holdSkipWeeks) ? plan.holdSkipWeeks : []);
+
   // Each of the fourteen weeks has its own board. Older boards stored a single week
   // meant to repeat, so fall back to that and treat every week as identical.
   const weeks = Array.isArray(plan.weeks) && plan.weeks.length === CYCLE_WEEKS
@@ -232,15 +237,13 @@ function toEvents(plan, room) {
         week: w + 1,
         day: p.day,
         minutes: p.mins,
-        teams: w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0,
+        // A skeleton-free week (team week, off-site) runs all in person: no virtual
+        // days, so no Teams links, wherever it sits in the cycle.
+        teams: w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0 && !skipHolds.has(w + 1),
         notes: typeof p.notes === "string" ? p.notes.slice(0, 4000) : "",
       });
     }
   }
-
-  // Weeks that opt out of the daily skeleton entirely -- a team week or off-site is
-  // one banner, not All Skate and tea service. 1-based week numbers.
-  const skipHolds = new Set(Array.isArray(plan.holdSkipWeeks) ? plan.holdSkipWeeks : []);
 
   // Week-long banners: one all-day event spanning Monday to Friday of the given week.
   for (const we of Array.isArray(plan.weekEvents) ? plan.weekEvents : []) {

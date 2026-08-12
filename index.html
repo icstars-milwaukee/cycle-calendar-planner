@@ -248,6 +248,11 @@
   .weekbar-dates { font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
   .weekbar-spacer { flex: 1; }
   .weekbar.holiday-week { border-color: var(--danger); background: var(--danger-soft); }
+  .weekbar.team-week { border-color: var(--moss); background: var(--moss-soft); }
+  .weekbar.team-week .weekbar-dates { color: var(--moss); font-weight: 700; }
+  /* A skeleton-free week: no fixed structure, no virtual tint -- a blank canvas. */
+  .teamweek .blk.skel { display: none; }
+  .teamweek .day.virtual { background: none; box-shadow: none; }
   /* Cycle period and holidays. */
   .cycle {
     border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
@@ -858,7 +863,19 @@
     { t: "Break",              s: 1050, e: 1080, k: "brk",      days: [0, 1, 3, 4], ics: "Hold: Break" }
   ];
 
+  // Weeks listed in holdSkipWeeks run without the fixed skeleton -- Team Week is a
+  // blank canvas, not All Skate and tea service. Routing every skeleton lookup through
+  // this one gate means conflicts, the Wednesday hard stop, stats, and the .ics export
+  // all agree without separate checks.
+  function skeletonFreeWeek() {
+    return (state && Array.isArray(state.holdSkipWeeks) &&
+            state.holdSkipWeeks.indexOf(curWeek) >= 0);
+  }
+  function rawFixedFor(d) {
+    return FIXED.filter(function (f) { return !f.days || f.days.indexOf(d) >= 0; });
+  }
   function fixedFor(d) {
+    if (skeletonFreeWeek()) return [];
     return FIXED.filter(function (f) { return !f.days || f.days.indexOf(d) >= 0; });
   }
   function openOf(d) {
@@ -1312,11 +1329,13 @@
         bar.title = sh.who + " on shift · " + fmt(sh.s) + " – " + fmt(sh.e);
         col.appendChild(bar);
       }
-      var dayFixed = fixedFor(d2);
+      // Drawn unconditionally; a skeleton-free week hides them with a class on the
+      // grid rather than rebuilding the DOM on every week change.
+      var dayFixed = rawFixedFor(d2);
       for (var i = 0; i < dayFixed.length; i++) {
         var f = dayFixed[i];
         var el = document.createElement("div");
-        el.className = "blk " + f.k;
+        el.className = "blk skel " + f.k;
         el.style.top = ((f.s - DAY_START) * PX) + "px";
         el.style.height = ((f.e - f.s) * PX - 2) + "px";
         if (f.k === "brk") el.textContent = f.t;
@@ -1967,11 +1986,17 @@
     if (!mon) {
       weekDatesEl.textContent = "— set the cycle start date";
       weekbarEl.classList.remove("holiday-week");
+      weekbarEl.classList.remove("team-week");
       return;
     }
     var fri = addDays(mon, 4);
     var count = (state.weeks[curWeek - 1] || []).length;
-    weekDatesEl.textContent = prettyDate(mon) + " – " + prettyDate(fri) +
+    var free = skeletonFreeWeek();
+    weekbarEl.classList.toggle("team-week", free);
+    var banner = (state.weekEvents || []).filter(function (we) { return we.week === curWeek; })[0];
+    weekDatesEl.textContent =
+      (free ? ((banner && banner.title) || "Team Week").toUpperCase() + " · all in person · " : "") +
+      prettyDate(mon) + " – " + prettyDate(fri) +
       "  ·  " + count + (count === 1 ? " workshop" : " workshops");
 
     // Flag weeks a holiday falls in, since blocked days drop that day's sessions.
@@ -1990,6 +2015,18 @@
   // a blocked holiday closes. Without this, every week looks identical while navigating.
   function renderDayDates() {
     var mon = mondayOfWeek(curWeek);
+    // A skeleton-free week is all in person: hide the fixed structure, drop the
+    // virtual tint, and flip every day badge to In person.
+    var free = skeletonFreeWeek();
+    cal.classList.toggle("teamweek", free);
+    for (var d = 0; d < 5; d++) {
+      var badge = cal.querySelectorAll(".day-head .mode")[d];
+      if (badge) {
+        var mode = free ? "inperson" : DAY_MODE[d];
+        badge.className = "mode " + mode;
+        badge.textContent = MODE_LABEL[mode];
+      }
+    }
     for (var d = 0; d < 5; d++) {
       var el = cal.querySelector("[data-date='" + d + "']");
       var col = dayCols[d];
