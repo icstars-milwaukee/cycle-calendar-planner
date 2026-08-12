@@ -670,6 +670,7 @@
             Publishes to
             <select id="groupPick" aria-label="Microsoft 365 group to publish to"></select>
           </label>
+          <button id="groupChange" type="button" hidden>Change group…</button>
           <p class="tools-note" id="groupNote"></p>
 
           <div class="tools-sep"></div>
@@ -2198,10 +2199,17 @@
   // to choose from -- which the note below says out loud rather than showing an empty box.
   var groupPickEl = document.getElementById("groupPick");
   var groupNoteEl = document.getElementById("groupNote");
+  var groupChangeEl = document.getElementById("groupChange");
   var knownGroups = [];
+  // The group is tied at setup. Once tied, the picker locks; Change unlocks it for one
+  // deliberate switch and it locks again.
+  var groupUnlocked = false;
 
   function renderGroupPick() {
     if (!groupPickEl) return;
+    var tied = !!state.groupId;
+    groupPickEl.disabled = tied && !groupUnlocked;
+    if (groupChangeEl) groupChangeEl.hidden = !tied || groupUnlocked;
     groupPickEl.innerHTML = "";
 
     var none = document.createElement("option");
@@ -2230,17 +2238,38 @@
       groupNoteEl.textContent = "Groups appear once the calendar sync has run once.";
     } else if (!state.groupId) {
       groupNoteEl.textContent = "Nothing publishes until a group is chosen.";
+    } else if (groupUnlocked) {
+      groupNoteEl.textContent = "Pick the new group — or close the menu to keep " + (state.groupName || "the current one") + ".";
     } else {
-      groupNoteEl.textContent = "This cycle publishes to " + (state.groupName || state.groupId) + ".";
+      groupNoteEl.textContent = "Set at cycle setup: " + (state.groupName || state.groupId) + ".";
     }
+  }
+
+  if (groupChangeEl) {
+    groupChangeEl.addEventListener("click", function () {
+      if (!window.confirm("Change which group calendar this cycle publishes to?\n\n" +
+          "This was set when the cycle was created and normally never changes. Events " +
+          "already on " + (state.groupName || "the current calendar") + " STAY there until " +
+          "cleaned up, and the new calendar receives the entire cycle.")) return;
+      groupUnlocked = true;
+      renderGroupPick();
+      groupPickEl.focus();
+    });
   }
 
   if (groupPickEl) {
     groupPickEl.addEventListener("change", function () {
       var id = groupPickEl.value;
       var g = knownGroups.filter(function (x) { return x.id === id; })[0];
+      if (state.groupId && id !== state.groupId) {
+        if (!window.confirm("Move this cycle's publishing to “" + (g ? g.name : id) + "”?")) {
+          renderGroupPick();
+          return;
+        }
+      }
       state.groupId = id || null;
       state.groupName = g ? g.name : null;
+      groupUnlocked = false;
       save();
       renderGroupPick();
       icsSay(id ? "Publishing to " + (g ? g.name : id) + "." : "No group selected — publishing is off.");
@@ -3233,7 +3262,25 @@
           sel.appendChild(o);
         });
         if (prev) sel.value = prev;
+        suggestGroupForName();
       }
+    }
+
+    // "Cycle 21" belongs with the "Cycle 21" group: when the names match after
+    // stripping spaces, dashes and case, preselect it. A suggestion, never a lock --
+    // the person creating the cycle sees and can change it before committing.
+    function normName(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, ""); }
+    function suggestGroupForName() {
+      var sel = document.getElementById("newCycleGroup");
+      var nameEl = document.getElementById("newCycleName");
+      if (!sel || !nameEl || sel.value) return;
+      var n = normName(nameEl.value);
+      if (n.length < 4) return;
+      var hit = knownGroups.filter(function (g) {
+        var gn = normName(g.name);
+        return gn.indexOf(n) >= 0 || n.indexOf(gn) >= 0;
+      })[0];
+      if (hit) sel.value = hit.id;
     }
 
     var refreshBtn = document.getElementById("refreshGroups");
@@ -3296,6 +3343,8 @@
     var switchBtn = document.getElementById("switchCycleBtn");
     if (switchBtn) switchBtn.addEventListener("click", function () { showChooser(); });
 
+    if (newName) newName.addEventListener("input", suggestGroupForName);
+
     newForm.addEventListener("submit", function (e) {
       e.preventDefault();
       chooserErr.textContent = "";
@@ -3305,6 +3354,10 @@
       var d = parseISO(st);
       if (!d) { chooserErr.textContent = "Pick the first Monday."; return; }
       if (d.getUTCDay() !== 1) { chooserErr.textContent = "A cycle has to start on a Monday."; return; }
+      if (!document.getElementById("newCycleGroup").value) {
+        chooserErr.textContent = "Choose the group calendar this cycle publishes to — it is part of setup.";
+        return;
+      }
 
       var btn = newForm.querySelector("button[type=submit]");
       btn.disabled = true;

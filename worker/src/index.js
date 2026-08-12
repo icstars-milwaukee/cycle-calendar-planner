@@ -818,6 +818,13 @@ export class Directory {
       return json({ ok: false, error: "A cycle has to start on a Monday." }, 400);
     }
 
+    // A cycle is tied to its group calendar at creation -- setup is the one moment the
+    // choice is cheap. Without this, boards drifted along publishing nowhere until
+    // someone discovered the setting.
+    if (!body.groupId || !body.groupName) {
+      return json({ ok: false, error: "Choose the group calendar this cycle publishes to." }, 400);
+    }
+
     // Slug becomes the room name and lives in URLs, so keep it conservative.
     let id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
     if (!id) id = "cycle";
