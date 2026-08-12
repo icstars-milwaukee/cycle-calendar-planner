@@ -689,7 +689,7 @@ export default {
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(
-      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe|\/ids)?$/);
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe|\/ids|\/log)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -900,6 +900,14 @@ export class Board {
       });
     }
 
+    // The room's activity history, newest first.
+    if (url.pathname.endsWith("/log")) {
+      return new Response(JSON.stringify({
+        ok: true,
+        log: (await this.ctx.storage.get("log")) || [],
+      }), { headers: { ...cors, "Content-Type": "application/json" } });
+    }
+
     // The calendar identity of every board event, as of the last time the calendar was
     // read. uid -> Graph event id.
     if (url.pathname.endsWith("/ids")) {
@@ -1007,6 +1015,31 @@ export class Board {
       // The uid -> calendar-event-id map, refreshed on every look at the calendar.
       // This is what lets a future edit target its exact event instead of searching.
       if (result.known) await this.ctx.storage.put("idMap", result.known);
+
+      // Log what this run set out to do, with a sample of the actual operations so the
+      // history reads as changes, not just numbers. changes=0 is logged too: that is
+      // the completion signal for whatever job came before it.
+      const opLine = (mark) => (x) => ({
+        op: mark,
+        s: String((x.event && x.event.subject) || x.uid || "").slice(0, 60),
+        d: String((x.event && x.event.start && x.event.start.dateTime) || "").slice(0, 16),
+      });
+      const ops = []
+        .concat((result.create || []).slice(0, 8).map(opLine("+")))
+        .concat((result.update || []).slice(0, 8).map(opLine("~")))
+        .concat((result.delete || []).slice(0, 8).map((x) => ({ op: "−", s: String(x.uid || "").slice(0, 60), d: x.reason || "" })));
+      await this.appendLog({
+        t: "sync",
+        ok: result.ok !== false,
+        error: result.error || null,
+        purge: result.purge === true,
+        inspected: result.inspected || 0,
+        create: (result.create || []).length,
+        update: (result.update || []).length,
+        delete: (result.delete || []).length,
+        changes: result.changes || 0,
+        ops,
+      });
       this.ctx.waitUntil(this.broadcastPublishState(room));
 
       return new Response(JSON.stringify(result), {
@@ -1100,6 +1133,15 @@ export class Board {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  // The room's activity log: publishes, sync runs and what they did, pokes and their
+  // fate. Bounded so a busy cycle cannot grow storage without limit.
+  async appendLog(entry) {
+    const log = (await this.ctx.storage.get("log")) || [];
+    log.unshift({ at: new Date().toISOString(), ...entry });
+    if (log.length > 200) log.length = 200;
+    await this.ctx.storage.put("log", log);
+  }
+
   async snapshot() {
     const plan = (await this.ctx.storage.get("plan")) || null;
     const version = (await this.ctx.storage.get("version")) || 0;
@@ -1135,6 +1177,7 @@ export class Board {
     const hook = this.env.PUBLISH_WEBHOOK;
     if (!hook) {
       await this.ctx.storage.put("lastNotify", { at: publishedAt, status: "no webhook configured" });
+      await this.appendLog({ t: "poke", ok: false, status: "no webhook configured", job: publishedAt });
       return;
     }
     try {
@@ -1144,8 +1187,10 @@ export class Board {
         body: JSON.stringify({ room, publishedAt }),
       });
       await this.ctx.storage.put("lastNotify", { at: publishedAt, status: res.status, ok: res.ok });
+      await this.appendLog({ t: "poke", ok: res.ok, status: res.status, job: publishedAt });
     } catch (e) {
       await this.ctx.storage.put("lastNotify", { at: publishedAt, status: "failed: " + (e && e.message) });
+      await this.appendLog({ t: "poke", ok: false, status: "failed: " + (e && e.message), job: publishedAt });
     }
   }
 
@@ -1196,6 +1241,7 @@ export class Board {
       const publishedAt = new Date().toISOString();
       // Deep copy so later edits to the live board cannot mutate what was published.
       await this.ctx.storage.put({ published: JSON.parse(JSON.stringify(plan)), publishedAt });
+      await this.appendLog({ t: "publish", by: msg.by || null, job: publishedAt });
 
       // Poke the flow so the calendar updates now instead of at the next scheduled run.
       // Deliberately not awaited: publishing must not hang or fail because Power

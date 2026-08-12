@@ -429,6 +429,25 @@
   .hold-row .hr-days button.on { border-color: var(--moss); background: var(--moss-soft); color: var(--moss); }
   .hold-row .hr-block { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--ink-soft); }
   .hold-times { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+  /* History. */
+  #logRefresh { margin: 6px 0 10px; padding: 5px 12px; font-size: 11.5px; }
+  .log-row {
+    border: 1px solid var(--line); border-radius: 7px; background: var(--paper);
+    padding: 8px 10px; margin-bottom: 6px; font-size: 11.5px; line-height: 1.5;
+  }
+  .log-row .lg-when { color: var(--ink-soft); font-size: 10.5px; }
+  .log-row .lg-head { font-weight: 700; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .log-row.pub { border-left: 3px solid var(--moss); }
+  .log-row .job {
+    font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .job.done { background: var(--moss-soft); color: var(--moss); }
+  .job.busy { background: var(--tea-soft); color: var(--tea); }
+  .job.bad  { background: var(--danger-soft); color: var(--danger); }
+  .job.old  { background: var(--break-bg); color: var(--slot-ink); }
+  .log-ops { margin: 4px 0 0; padding: 0; list-style: none; color: var(--ink-soft); font-size: 11px; }
+  .log-ops .op { font-weight: 800; display: inline-block; width: 12px; }
   .blk.cust { background: var(--break-bg); border-left: 3px solid var(--slot-line); color: var(--slot-ink); }
   .shelf h2 { font-size: 11px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-soft); margin: 0 0 4px; }
   .shelf .hint { font-size: 11.5px; color: var(--ink-soft); margin: 0 0 12px; }
@@ -829,6 +848,7 @@
         <button type="button" data-tab="tabShelf" class="on">Workshops</button>
         <button type="button" data-tab="tabCats">Categories</button>
         <button type="button" data-tab="tabCycle">Cycle</button>
+        <button type="button" data-tab="tabLog">History</button>
       </div>
 
       <div class="spanel on" id="tabShelf">
@@ -900,6 +920,12 @@
             </form>
           </div>
         </details>
+      </div>
+      <div class="spanel" id="tabLog">
+        <p class="hint">Everything that has happened to this cycle's calendar, newest first.
+        A publish is <b>completed</b> once a later sync found nothing left to do.</p>
+        <button id="logRefresh" type="button">Refresh</button>
+        <div id="logList"><p class="hint">Loading…</p></div>
       </div>
     </aside>
 
@@ -2897,6 +2923,107 @@
     var checkBtn = document.getElementById("checkBtn");
     var publishing = false;
 
+    // ----- history -----
+    // Renders the worker's activity log and derives each publish's fate from what
+    // happened after it: a later sync that found nothing to do means completed; a
+    // later sync with work remaining means still applying; a newer publish before
+    // completion means superseded. Derived, not asserted -- the log never lies about
+    // more than was observed.
+    var logListEl = document.getElementById("logList");
+    var logTimer = null;
+
+    function jobStatusFor(idx, log) {
+      for (var i = idx - 1; i >= 0; i--) {   // newest first: later events sit earlier
+        var e = log[i];
+        if (e.t === "publish") return { cls: "old", label: "superseded" };
+        if (e.t === "sync" && e.ok !== false) {
+          if (e.changes === 0) return { cls: "done", label: "completed" };
+          return { cls: "busy", label: e.changes + " to apply at last look" };
+        }
+        if (e.t === "poke" && e.ok === false) return { cls: "bad", label: "poke failed" };
+      }
+      return { cls: "busy", label: "queued" };
+    }
+
+    function renderLog(log) {
+      if (!logListEl) return;
+      if (!log.length) {
+        logListEl.innerHTML = "<p class='hint'>Nothing yet — the log starts with the next publish.</p>";
+        return;
+      }
+      logListEl.innerHTML = "";
+      log.forEach(function (e, idx) {
+        var row = document.createElement("div");
+        row.className = "log-row" + (e.t === "publish" ? " pub" : "");
+        var when = new Date(e.at);
+        var whenTxt = prettyDate(e.at.slice(0, 10)) + " " +
+          pad2(when.getHours()) + ":" + pad2(when.getMinutes());
+
+        if (e.t === "publish") {
+          var st = jobStatusFor(idx, log);
+          row.innerHTML = "<div class='lg-head'>Published" +
+            (e.by ? " <span class='lg-when'>by " + e.by + "</span>" : "") +
+            " <span class='job " + st.cls + "'></span></div>" +
+            "<span class='lg-when'>" + whenTxt + "</span>";
+          row.querySelector(".job").textContent = st.label;
+        } else if (e.t === "poke") {
+          row.innerHTML = "<div class='lg-head'>Sync job " + (e.ok ? "queued" : "could not be queued") +
+            (e.ok ? "" : " <span class='job bad'></span>") + "</div>" +
+            "<span class='lg-when'>" + whenTxt + (e.ok ? "" : " · " + e.status) + "</span>";
+          if (!e.ok) row.querySelector(".job").textContent = String(e.status).slice(0, 40);
+        } else if (e.t === "sync") {
+          var head = e.ok === false ? "Sync refused — " + (e.error || "")
+            : e.changes === 0 ? "Checked the calendar — nothing to do"
+            : (e.purge ? "Purge: " : "Calendar changes: ") +
+              (e.create ? "+" + e.create + " " : "") + (e.update ? "~" + e.update + " " : "") +
+              (e.delete ? "−" + e.delete : "");
+          row.innerHTML = "<div class='lg-head'></div><span class='lg-when'>" + whenTxt +
+            " · looked at " + (e.inspected || 0) + " events</span>";
+          row.querySelector(".lg-head").textContent = head;
+          if (e.ops && e.ops.length) {
+            var ul = document.createElement("ul");
+            ul.className = "log-ops";
+            e.ops.forEach(function (o) {
+              var li = document.createElement("li");
+              li.innerHTML = "<span class='op'></span>";
+              li.querySelector(".op").textContent = o.op;
+              li.appendChild(document.createTextNode(o.s + (o.d ? "  ·  " + o.d.replace("T", " ") : "")));
+              ul.appendChild(li);
+            });
+            var more = (e.create + e.update + e.delete) - e.ops.length;
+            if (more > 0) {
+              var li2 = document.createElement("li");
+              li2.textContent = "… and " + more + " more";
+              ul.appendChild(li2);
+            }
+            row.appendChild(ul);
+          }
+        }
+        logListEl.appendChild(row);
+      });
+    }
+
+    function fetchLog() {
+      if (!room) return;
+      fetch(base + "/room/" + room + "/log?pw=" + encodeURIComponent(pw))
+        .then(function (r) { return r.json(); })
+        .then(function (j) { renderLog((j && j.log) || []); })
+        .catch(function () {
+          if (logListEl) logListEl.innerHTML = "<p class='hint'>Could not load the history.</p>";
+        });
+    }
+    function refreshLogIfVisible() {
+      var panel = document.getElementById("tabLog");
+      if (!panel || !panel.classList.contains("on")) return;
+      if (logTimer) clearTimeout(logTimer);
+      logTimer = setTimeout(function () { logTimer = null; fetchLog(); }, 1500);
+    }
+    [].slice.call(document.querySelectorAll(".side-tabs button")).forEach(function (b) {
+      if (b.getAttribute("data-tab") === "tabLog") b.addEventListener("click", fetchLog);
+    });
+    var logRefreshBtn = document.getElementById("logRefresh");
+    if (logRefreshBtn) logRefreshBtn.addEventListener("click", fetchLog);
+
     // ----- live sync -----
     // With live sync on, every edit publishes itself a few seconds after the editing
     // pauses. The debounce turns a burst of drags into one publish; the dirty flag
@@ -3052,6 +3179,7 @@
     function showPublish(s) {
       if (!publishEl || !s) return;
       showCalendar(s);
+      refreshLogIfVisible();
       var p = s.pending || {};
 
       if (p.ready === false) {
