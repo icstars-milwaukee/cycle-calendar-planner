@@ -340,6 +340,11 @@ function graphBody(ev) {
     start: ev.start,
     end: ev.end,
     isAllDay: !!ev.isAllDay,
+    // The planner category rides as a real Outlook category, not just body text.
+    // Outlook maps the NAME to a color from the calendar's own category list, which
+    // Graph does not expose for group mailboxes -- so someone defines each name's
+    // color once in Outlook, and every event wearing that name follows it.
+    categories: ev.category ? [ev.category] : [],
     // Graph uses transactionId to make event creation idempotent: re-POSTing the same
     // one does not create a second event. Without it, any run that creates events and
     // then dies before reporting back duplicates all of them on the next attempt --
@@ -487,7 +492,12 @@ function reconcile(publishedPlan, room, existingRaw) {
     const sameSubject = (keep.subject || "") === ev.subject;
     const sameStart = String((keep.start && keep.start.dateTime) || "").slice(0, 19) === ev.start.dateTime;
     const sameEnd = String((keep.end && keep.end.dateTime) || "").slice(0, 19) === ev.end.dateTime;
-    if (!sameSubject || !sameStart || !sameEnd) {
+    // Category drift counts too -- but only when the flow sent categories at all.
+    // A flow that predates the category column would otherwise make every event look
+    // uncategorized and rewrite the entire calendar on every run.
+    const sameCat = keep.categories === undefined ||
+      ((keep.categories || [])[0] || "") === (ev.category || "");
+    if (!sameSubject || !sameStart || !sameEnd || !sameCat) {
       update.push({ uid, eventId: keep.id, event: graphBody(ev) });
     }
   }
