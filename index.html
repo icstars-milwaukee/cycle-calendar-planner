@@ -855,7 +855,26 @@
   // with one neutral bucket so a workshop always has somewhere to sit, and every
   // meaningful category is created by whoever is planning.
   function seedCats() {
-    return [{ id: "uncat", name: "Uncategorized", color: "#8A8578", soft: null, fixed: true }];
+    return [{ id: "uncat", name: "Uncategorized", color: "#8A8578", soft: null }];
+  }
+
+  // Boards made before the presets were removed carry categories that are locked
+  // ("built-in", no picker, no delete) and colored with CSS variables a color picker
+  // cannot display. Unlock them and pin their colors to real hexes, so every category
+  // on every board is editable the same way.
+  var LEGACY_CAT_HEX = {
+    "var(--cat-leadership)": "#4A6B8A",
+    "var(--cat-community)": "#6B5A8A",
+    "var(--cat-self)": "#3E7A6E",
+    "var(--cat-business)": "#96504B"
+  };
+  function migrateCats() {
+    (state.cats || []).forEach(function (c) {
+      if (LEGACY_CAT_HEX[c.color]) c.color = LEGACY_CAT_HEX[c.color];
+      else if (/^var\(/.test(String(c.color))) c.color = "#8A8578";
+      if (/^var\(/.test(String(c.soft || ""))) c.soft = null;
+      delete c.fixed;
+    });
   }
 
   var SUPPORTS_MIX = !!(window.CSS && CSS.supports &&
@@ -912,6 +931,7 @@
     }
     if (curWeek < 1 || curWeek > CYCLE_WEEKS) curWeek = 1;
     state.placed = state.weeks[curWeek - 1];
+    migrateCats();
   }
 
   function setPlaced(arr) {
@@ -1011,6 +1031,13 @@
   }
   function newCatId() {
     return "k" + (state.seq++) + "-" + Math.random().toString(36).slice(2, 6);
+  }
+  // The category after this one, wrapping. Clicking a category chip steps through the
+  // list -- with a handful of categories that is faster than any dropdown.
+  function nextCatId(cur) {
+    var idx = -1;
+    state.cats.forEach(function (c, i) { if (c.id === cur) idx = i; });
+    return state.cats[(idx + 1) % state.cats.length].id;
   }
 
   // ---------- repeating a workshop ----------
@@ -1245,6 +1272,20 @@
         save(); renderAll();
       });
       el.querySelector(".rep").addEventListener("click", function () { openRepeat(p); });
+      // Clicking the category name on a block moves just that block to the next
+      // category -- the fix for every workshop being stuck in whatever the add form
+      // stamped on it.
+      var cx = el.querySelector(".cx");
+      if (cx) {
+        cx.title = "Click to change this block's category";
+        cx.style.cursor = "pointer";
+        cx.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+        cx.addEventListener("click", function (e) {
+          e.stopPropagation();
+          p.cat = nextCatId(catOf(p));
+          save(); renderAll();
+        });
+      }
       dayCols[p.day].appendChild(el);
     });
   }
@@ -1271,6 +1312,19 @@
         ";color:" + esc(paint.color) + "'>" + esc(catName(catOf(w))) + "</span>" +
         "<span class='mn'>" + w.mins + " min</span></span>";
       c.addEventListener("pointerdown", function (e) { startDrag(e, w, "shelf"); });
+      // The chip on a shelf card recategorizes the workshop itself, so future
+      // placements inherit the new category.
+      var chip = c.querySelector(".chip");
+      if (chip) {
+        chip.title = "Click to change category";
+        chip.style.cursor = "pointer";
+        chip.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+        chip.addEventListener("click", function (e) {
+          e.stopPropagation();
+          w.cat = nextCatId(catOf(w));
+          save(); renderShelf(); renderStats(); renderLegend();
+        });
+      }
       shelf.appendChild(c);
     });
   }
@@ -1392,7 +1446,10 @@
           if (u.count && !window.confirm(
             "\"" + c.name + "\" is used by " + u.count + " workshop" + (u.count === 1 ? "" : "s") +
             ". Delete it and move them to \"" + fallback.name + "\"?")) return;
-          state.placed.forEach(function (p) { if (catOf(p) === c.id) p.cat = fallback.id; });
+          // Every week, not just the one on screen -- a category is board-wide.
+          (state.weeks || [state.placed]).forEach(function (wk) {
+            (wk || []).forEach(function (p) { if (catOf(p) === c.id) p.cat = fallback.id; });
+          });
           state.custom.forEach(function (w) { if (catOf(w) === c.id) w.cat = fallback.id; });
           state.cats = state.cats.filter(function (x) { return x.id !== c.id; });
           save(); renderCatSelect(); renderAll();
