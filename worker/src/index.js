@@ -956,6 +956,7 @@ export class Board {
         return new Response("POST required", { status: 405, headers: cors });
       }
       this.ctx.waitUntil(this.notifyFlow(room, new Date().toISOString()));
+      this.ctx.waitUntil(this.ensureGuard(room));
       return new Response(JSON.stringify({ ok: true, asked: true }), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
@@ -968,6 +969,7 @@ export class Board {
         return new Response("POST required", { status: 405, headers: cors });
       }
       for (const ws of this.ctx.getWebSockets()) { try { ws.close(); } catch (e) {} }
+      await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
       return new Response(JSON.stringify({ ok: true, wiped: room }), {
         headers: { ...cors, "Content-Type": "application/json" },
@@ -1174,6 +1176,8 @@ export class Board {
     const publish = await this.publishState(room);
     server.send(JSON.stringify({ type: "snapshot", ...snapshot, publish, peers: this.peerCount() }));
     this.broadcastPeers();
+    // Revive the guard on any connection -- covers deploys and stalled alarms.
+    this.ctx.waitUntil(this.ensureGuard(room));
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -1182,6 +1186,17 @@ export class Board {
   // fate. Bounded so a busy cycle cannot grow storage without limit.
   async appendLog(entry) {
     const log = (await this.ctx.storage.get("log")) || [];
+    // The guard checks the calendar every minute; a healthy calendar would bury real
+    // history under "nothing to do" lines. Consecutive clean checks collapse into one
+    // rolling entry whose timestamp is the latest verification.
+    if (entry.t === "sync" && entry.changes === 0 && entry.ok !== false &&
+        log[0] && log[0].t === "sync" && log[0].changes === 0 && log[0].ok !== false) {
+      log[0].at = new Date().toISOString();
+      log[0].inspected = entry.inspected;
+      log[0].checks = (log[0].checks || 1) + 1;
+      await this.ctx.storage.put("log", log);
+      return;
+    }
     log.unshift({ at: new Date().toISOString(), ...entry });
     if (log.length > 200) log.length = 200;
     await this.ctx.storage.put("log", log);
@@ -1208,6 +1223,8 @@ export class Board {
       // What the calendar itself last looked like, and when.
       calendar: (await this.ctx.storage.get("lastReconcile")) || null,
       lastNotify: (await this.ctx.storage.get("lastNotify")) || null,
+      // Whether the every-minute self-heal heartbeat is armed for this room.
+      guard: (await this.ctx.storage.getAlarm()) !== null,
     };
   }
 
@@ -1218,11 +1235,11 @@ export class Board {
    * URL carries its own signature and is a credential, so it lives in a secret rather
    * than the repo. Unset simply means no instant push -- the scheduled run still works.
    */
-  async notifyFlow(room, publishedAt) {
+  async notifyFlow(room, publishedAt, quiet) {
     const hook = this.env.PUBLISH_WEBHOOK;
     if (!hook) {
       await this.ctx.storage.put("lastNotify", { at: publishedAt, status: "no webhook configured" });
-      await this.appendLog({ t: "poke", ok: false, status: "no webhook configured", job: publishedAt });
+      if (!quiet) await this.appendLog({ t: "poke", ok: false, status: "no webhook configured", job: publishedAt });
       return;
     }
     try {
@@ -1232,11 +1249,62 @@ export class Board {
         body: JSON.stringify({ room, publishedAt }),
       });
       await this.ctx.storage.put("lastNotify", { at: publishedAt, status: res.status, ok: res.ok });
-      await this.appendLog({ t: "poke", ok: res.ok, status: res.status, job: publishedAt });
+      // Guard heartbeats are quiet: 1,440 successful pokes a day is noise, not history.
+      // A failed poke is always worth a line, but only one line per streak of failures.
+      if (!quiet) await this.appendLog({ t: "poke", ok: res.ok, status: res.status, job: publishedAt });
+      else if (!res.ok) await this.logPokeFailureOnce(res.status);
     } catch (e) {
       await this.ctx.storage.put("lastNotify", { at: publishedAt, status: "failed: " + (e && e.message) });
-      await this.appendLog({ t: "poke", ok: false, status: "failed: " + (e && e.message), job: publishedAt });
+      if (!quiet) await this.appendLog({ t: "poke", ok: false, status: "failed: " + (e && e.message), job: publishedAt });
+      else await this.logPokeFailureOnce("failed: " + (e && e.message));
     }
+  }
+
+  async logPokeFailureOnce(status) {
+    const log = (await this.ctx.storage.get("log")) || [];
+    if (log[0] && log[0].t === "poke" && log[0].ok === false) return;
+    await this.appendLog({ t: "poke", ok: false, status, guard: true });
+  }
+
+  /**
+   * The guard: a permanent 60-second heartbeat (GUARD_SECONDS to tune) that pokes the
+   * sync flow for this room. The reconciler puts the calendar back the way the board
+   * says, so anything deleted or edited directly in Outlook is undone within about a
+   * minute -- enforcement by futility rather than permissions, and it also covers the
+   * connection owner, who no permission scheme could restrict.
+   *
+   * Only rooms that are registered cycles with a group tied and a published board
+   * heartbeat; anything else (scratch rooms, tests) never starts one, and a room that
+   * stops qualifying stops beating on its next alarm.
+   */
+  guardInterval() {
+    const n = parseInt(this.env.GUARD_SECONDS || "60", 10);
+    return Math.max(30, isNaN(n) ? 60 : n) * 1000;
+  }
+
+  async guardEligible(room) {
+    const published = (await this.ctx.storage.get("published")) || null;
+    if (!published || !published.groupId || published.guard === false) return false;
+    try {
+      const dir = this.env.CYCLES.get(this.env.CYCLES.idFromName("directory"));
+      const res = await dir.fetch(new Request("https://do/cycles", { method: "GET" }));
+      const j = await res.json();
+      return (j.cycles || []).some((c) => c.id === room);
+    } catch (e) { return false; }
+  }
+
+  async ensureGuard(room) {
+    if (!(await this.guardEligible(room))) return;
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(Date.now() + this.guardInterval());
+    }
+  }
+
+  async alarm() {
+    const room = (await this.ctx.storage.get("room")) || "board";
+    if (!(await this.guardEligible(room))) return;   // stop beating; ensureGuard revives it
+    await this.notifyFlow(room, new Date().toISOString(), true);
+    await this.ctx.storage.setAlarm(Date.now() + this.guardInterval());
   }
 
   async broadcastPublishState(room) {
@@ -1297,9 +1365,10 @@ export class Board {
 
       // Poke the flow so the calendar updates now instead of at the next scheduled run.
       // Deliberately not awaited: publishing must not hang or fail because Power
-      // Automate is slow or down. If this never lands, the flow's scheduled run is the
-      // backstop and the calendar simply catches up a few minutes later.
+      // Automate is slow or down. If this never lands, the guard heartbeat repairs it
+      // within about a minute.
       this.ctx.waitUntil(this.notifyFlow(room, publishedAt));
+      this.ctx.waitUntil(this.ensureGuard(room));
 
       ws.send(JSON.stringify({ type: "publish-result", ok: true, publishedAt, by: msg.by || null }));
       const state = await this.broadcastPublishState(room);

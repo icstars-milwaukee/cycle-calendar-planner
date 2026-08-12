@@ -3183,6 +3183,7 @@
       box("live", "Calendar is live and correct",
         "Verified against " + where + " " + ago(cal.at) + ". " +
         cal.ours + " event" + (cal.ours === 1 ? "" : "s") + " in place, nothing pending." +
+        (s.guard ? " <b>Guarded:</b> anything deleted or changed directly in Outlook is put back within about a minute." : "") +
         (cal.foreign ? " " + cal.foreign + " other event" + (cal.foreign === 1 ? "" : "s") + " on that calendar were left alone." : ""));
     }
 
