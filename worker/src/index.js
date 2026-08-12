@@ -1334,8 +1334,10 @@ export class Board {
   async alarm() {
     const room = (await this.ctx.storage.get("room")) || "board";
     if (!(await this.guardEligible(room))) return;   // stop beating; ensureGuard revives it
-    await this.notifyFlow(room, new Date().toISOString(), true);
+    // Reschedule BEFORE working: a failure in the poke must never kill the heartbeat,
+    // and the alarm being momentarily unset made the guard flag flicker false.
     await this.ctx.storage.setAlarm(Date.now() + this.guardInterval());
+    await this.notifyFlow(room, new Date().toISOString(), true);
   }
 
   async broadcastPublishState(room) {
