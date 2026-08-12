@@ -430,12 +430,29 @@ function reconcile(publishedPlan, room, existingRaw) {
   if (!publishedPlan) {
     return { ok: false, error: "Nothing has been published yet.", create: [], update: [], delete: [] };
   }
+  const marker = "cycle-planner-" + room + "-";
+
+  // A retired room: everything it ever put on the calendar is deleted, holidays and
+  // holds included, and nothing is created. Used to clean a room up before wiping it.
+  if (publishedPlan.purgeAll === true) {
+    const remove = [];
+    let foreignCount = 0;
+    for (const ev of Array.isArray(existingRaw) ? existingRaw : []) {
+      const uid = uidOfExisting(ev, marker);
+      if (uid) remove.push({ uid, eventId: ev.id, reason: "room retired" });
+      else foreignCount++;
+    }
+    return {
+      ok: true, purge: true, marker,
+      inspected: (existingRaw || []).length, ours: remove.length, foreign: foreignCount,
+      create: [], update: [], delete: remove, changes: remove.length,
+    };
+  }
+
   const projection = toEvents(publishedPlan, room);
   if (!projection.ok) {
     return { ok: false, error: projection.error, create: [], update: [], delete: [] };
   }
-
-  const marker = "cycle-planner-" + room + "-";
   const desired = new Map(projection.events.map((e) => [e.uid, e]));
 
   // Group what is on the calendar by uid. More than one entry for a uid means an earlier
@@ -564,7 +581,7 @@ export default {
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(
-      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check)?$/);
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -754,6 +771,19 @@ export class Board {
       }
       this.ctx.waitUntil(this.notifyFlow(room, new Date().toISOString()));
       return new Response(JSON.stringify({ ok: true, asked: true }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // Erases the room entirely: board, published snapshot, tracking, everything. The
+    // calendar is untouched -- purge first if its events should go too.
+    if (url.pathname.endsWith("/wipe")) {
+      if (request.method !== "POST") {
+        return new Response("POST required", { status: 405, headers: cors });
+      }
+      for (const ws of this.ctx.getWebSockets()) { try { ws.close(); } catch (e) {} }
+      await this.ctx.storage.deleteAll();
+      return new Response(JSON.stringify({ ok: true, wiped: room }), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
     }
