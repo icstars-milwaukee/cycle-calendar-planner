@@ -228,6 +228,12 @@
   }
   .blk:hover .nt { opacity: 1; }
   .blk .nt.has { opacity: 0.85; }
+  /* Non-admins never see delete controls; the server refuses them anyway. */
+  .not-admin .blk .x,
+  .not-admin #resetBtn,
+  .not-admin .hold-row .del,
+  .not-admin #catList .del,
+  .not-admin .cycle-item .ci-del { display: none; }
   /* Repeat dialog. */
   .rep-label { font-size: 11.5px; font-weight: 700; color: var(--ink-soft); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; }
   .rep-days { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1077,6 +1083,9 @@
   var applyingRemote = false;
   // Assigned by the sync layer when live sync is available; called on every local edit.
   var autoPublishHook = null;
+  // Whether the signed-in person may delete things. The server enforces this
+  // regardless; the flag only decides which controls are worth showing.
+  var amAdmin = false;
 
   var state = load() || { placed: [], custom: [], seq: 1, cats: seedCats() };
   if (!Array.isArray(state.cats) || !state.cats.length) state.cats = seedCats();
@@ -3284,7 +3293,10 @@
       return fetch(base + "/auth?pw=" + encodeURIComponent(candidate) +
           "&user=" + encodeURIComponent(email || ""), { method: "GET" })
         .then(function (r) {
-          if (r.ok) return true;
+          if (r.ok) {
+            return r.json().then(function (j) { return { granted: true, admin: !!(j && j.admin) }; })
+              .catch(function () { return { granted: true, admin: false }; });
+          }
           return r.json().then(function (j) { return { refused: (j && j.error) || "Not accepted." }; })
             .catch(function () { return { refused: "Not accepted." }; });
         })
@@ -3307,12 +3319,14 @@
           if (!timer) timer = setTimeout(function () { timer = null; start(); }, 15000);
           return;
         }
-        if (ok !== true) {
+        if (!ok || !ok.granted) {
           try { localStorage.removeItem(PW_KEY); } catch (e) {}
           syncStatus("off", "Locked", "Sign in with your work email and the team password.");
           showGate((ok && ok.refused) || (pw ? "That was not accepted." : ""));
           return;
         }
+        amAdmin = !!ok.admin;
+        document.body.classList.toggle("not-admin", !amAdmin);
         try { localStorage.setItem(PW_KEY, pw); } catch (e) {}
         try { localStorage.setItem(EM_KEY, userEmail); } catch (e) {}
         if (gate) gate.hidden = true;
@@ -3367,7 +3381,8 @@
           e.stopPropagation();
           if (!window.confirm("Remove “" + c.name + "”?\n\nIts board is erased for everyone. " +
               "Events already on the calendar stay until cleaned up.")) return;
-          fetch(base + "/cycles?pw=" + encodeURIComponent(pw) + "&id=" + encodeURIComponent(c.id), { method: "DELETE" })
+          fetch(base + "/cycles?pw=" + encodeURIComponent(pw) + "&id=" + encodeURIComponent(c.id) +
+              "&user=" + encodeURIComponent(userEmail), { method: "DELETE" })
             .then(function (r) { return r.json(); })
             .then(function (j) {
               if (!j.ok) { chooserErr.textContent = j.error || "Could not remove it."; return; }
@@ -3573,6 +3588,7 @@
 
         if (msg.type === "snapshot") {
           version = msg.version || 0;
+          if (msg.youAre) { amAdmin = !!msg.youAre.admin; document.body.classList.toggle("not-admin", !amAdmin); }
           if (msg.plan) {
             // The room already has a board; it is the shared truth, so adopt it.
             var incoming = null;
@@ -3615,7 +3631,13 @@
           if (autoDirty) { autoDirty = false; scheduleAutoPublish(); }
           return;
         }
-        if (msg.type === "error") { syncStatus("bad", "Sync error", msg.message || ""); return; }
+        if (msg.type === "error") {
+          // Permission refusals deserve words, not just a red pill -- the board also
+          // reverts via the sync the server sends right after.
+          if (/admin/i.test(msg.message || "")) icsSay(msg.message, true);
+          else syncStatus("bad", "Sync error", msg.message || "");
+          return;
+        }
       };
 
       ws.onclose = function () { ws = null; retry(); };

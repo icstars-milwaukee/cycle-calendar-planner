@@ -635,6 +635,49 @@ function emailOk(email, env) {
   return allowed.indexOf(domain) >= 0 ? e : null;
 }
 
+// Admins are the only people who can delete anything -- cycles, boards, blocks, holds,
+// categories. Same honesty caveat as login: identity is asserted, not proven.
+function isAdmin(email, env) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return false;
+  return String(env.ADMIN_EMAILS || "").toLowerCase()
+    .split(",").map((x) => x.trim()).filter(Boolean).indexOf(e) >= 0;
+}
+
+/**
+ * Does the incoming board LOSE anything the current board has? Replacements do not
+ * count: a block whose uid vanished but whose title/day/time survives in the same week
+ * is a re-identification (format flips, tooling), not a deletion.
+ */
+function detectLoss(current, incoming) {
+  if (!current) return null;
+  const weeksOf = (p) => Array.isArray(p.weeks) && p.weeks.length
+    ? p.weeks : [Array.isArray(p.placed) ? p.placed : []];
+  const curW = weeksOf(current), incW = weeksOf(incoming);
+
+  for (let i = 0; i < curW.length; i++) {
+    const inc = Array.isArray(incW[i]) ? incW[i] : [];
+    const incUids = new Set(inc.map((b) => b.uid));
+    for (const b of curW[i] || []) {
+      if (incUids.has(b.uid)) continue;
+      const replaced = inc.some((x) => x.title === b.title && x.day === b.day &&
+        x.start === b.start && x.mins === b.mins);
+      if (!replaced) return "the workshop “" + (b.title || "?") + "” in week " + (i + 1);
+    }
+  }
+  if (Array.isArray(current.holds)) {
+    const incIds = new Set((incoming.holds || []).map((h) => h.id));
+    for (const h of current.holds) {
+      if (!incIds.has(h.id)) return "the hold “" + h.title + "”";
+    }
+  }
+  const incCats = new Set((incoming.cats || []).map((c) => c.id));
+  for (const c of current.cats || []) {
+    if (!incCats.has(c.id)) return "the category “" + c.name + "”";
+  }
+  return null;
+}
+
 function deny(cors) {
   return new Response(JSON.stringify({ ok: false, error: "Wrong password." }), {
     status: 401,
@@ -682,7 +725,7 @@ export default {
             status: 403, headers: { ...cors, "Content-Type": "application/json" },
           });
         }
-        return new Response(JSON.stringify({ ok: true, user }), {
+        return new Response(JSON.stringify({ ok: true, user, admin: isAdmin(user, env) }), {
           headers: { ...cors, "Content-Type": "application/json" },
         });
       }
@@ -811,9 +854,11 @@ export class Directory {
       });
     }
 
-    // Retiring a cycle removes it from the list and erases its board. The calendar is
-    // left alone -- purge it first if its events should go too.
+    // Retiring a cycle removes it from the list and erases its board. Admin only.
     if (request.method === "DELETE") {
+      if (!isAdmin(new URL(request.url).searchParams.get("user"), this.env)) {
+        return json({ ok: false, error: "Only an admin can remove a cycle." }, 403);
+      }
       const id = new URL(request.url).searchParams.get("id") || "";
       const idx = cycles.findIndex((c) => c.id === id);
       if (idx < 0) return json({ ok: false, error: "No such cycle." }, 404);
@@ -963,10 +1008,17 @@ export class Board {
     }
 
     // Erases the room entirely: board, published snapshot, tracking, everything. The
-    // calendar is untouched -- purge first if its events should go too.
+    // calendar is untouched -- purge first if its events should go too. Admin only,
+    // except scratch rooms outside the registry, which tests create and destroy freely.
     if (url.pathname.endsWith("/wipe")) {
       if (request.method !== "POST") {
         return new Response("POST required", { status: 405, headers: cors });
+      }
+      const registered = await this.guardEligibleRegistry(room);
+      if (registered && !isAdmin(url.searchParams.get("user"), this.env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Only an admin can wipe a cycle." }), {
+          status: 403, headers: { ...cors, "Content-Type": "application/json" },
+        });
       }
       for (const ws of this.ctx.getWebSockets()) { try { ws.close(); } catch (e) {} }
       await this.ctx.storage.deleteAlarm();
@@ -982,6 +1034,11 @@ export class Board {
     if (url.pathname.endsWith("/tamper-test")) {
       if (request.method !== "POST") {
         return new Response("POST required", { status: 405, headers: cors });
+      }
+      if (!isAdmin(url.searchParams.get("user"), this.env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Only an admin can run the guard drill." }), {
+          status: 403, headers: { ...cors, "Content-Type": "application/json" },
+        });
       }
       const ids = (await this.ctx.storage.get("idMap")) || {};
       const uids = Object.keys(ids).filter((u) => !/holiday|hold-|weekev/.test(u));
@@ -1004,6 +1061,11 @@ export class Board {
     if (url.pathname.endsWith("/reset-tracking")) {
       if (request.method !== "POST") {
         return new Response("POST required", { status: 405, headers: cors });
+      }
+      if (!isAdmin(url.searchParams.get("user"), this.env)) {
+        return new Response(JSON.stringify({ ok: false, error: "Only an admin can reset tracking." }), {
+          status: 403, headers: { ...cors, "Content-Type": "application/json" },
+        });
       }
       const previous = Object.keys((await this.ctx.storage.get("pushed")) || {}).length;
       await this.ctx.storage.put({ pushed: {}, lastSync: null });
@@ -1205,7 +1267,10 @@ export class Board {
 
     const snapshot = await this.snapshot();
     const publish = await this.publishState(room);
-    server.send(JSON.stringify({ type: "snapshot", ...snapshot, publish, peers: this.peerCount() }));
+    server.send(JSON.stringify({
+      type: "snapshot", ...snapshot, publish, peers: this.peerCount(),
+      youAre: { email: connUser, admin: isAdmin(connUser, this.env) },
+    }));
     this.broadcastPeers();
     // Revive the guard on any connection -- covers deploys and stalled alarms.
     this.ctx.waitUntil(this.ensureGuard(room));
@@ -1313,15 +1378,19 @@ export class Board {
     return Math.max(30, isNaN(n) ? 60 : n) * 1000;
   }
 
-  async guardEligible(room) {
-    const published = (await this.ctx.storage.get("published")) || null;
-    if (!published || !published.groupId || published.guard === false) return false;
+  async guardEligibleRegistry(room) {
     try {
       const dir = this.env.CYCLES.get(this.env.CYCLES.idFromName("directory"));
       const res = await dir.fetch(new Request("https://do/cycles", { method: "GET" }));
       const j = await res.json();
       return (j.cycles || []).some((c) => c.id === room);
     } catch (e) { return false; }
+  }
+
+  async guardEligible(room) {
+    const published = (await this.ctx.storage.get("published")) || null;
+    if (!published || !published.groupId || published.guard === false) return false;
+    return this.guardEligibleRegistry(room);
   }
 
   async ensureGuard(room) {
@@ -1390,6 +1459,13 @@ export class Board {
           error: "Pick the Monday this week starts before publishing to the calendar.",
         }));
       }
+      // Mass-deletion flags are admin-only, wherever the plan came from.
+      if ((plan.purgeAll === true || plan.cleanPlannerStrays === true) && !isAdmin(msg.by, this.env)) {
+        return ws.send(JSON.stringify({
+          type: "publish-result", ok: false,
+          error: "Only an admin can publish a purge.",
+        }));
+      }
 
       const publishedAt = new Date().toISOString();
       // Deep copy so later edits to the live board cannot mutate what was published.
@@ -1417,6 +1493,23 @@ export class Board {
     const encoded = JSON.stringify(msg.plan);
     if (encoded.length > MAX_PLAN_BYTES) {
       return ws.send(JSON.stringify({ type: "error", message: "That board is too large to sync." }));
+    }
+
+    // Only admins delete. Anyone can add, move, retime, recategorize, edit details --
+    // but an update that LOSES a workshop, hold or category is refused unless the
+    // signed-in email is an admin, and the client is handed the authoritative board
+    // back so its optimistic local copy reverts.
+    if (!isAdmin(actor, this.env)) {
+      const currentPlan = (await this.ctx.storage.get("plan")) || null;
+      const lost = detectLoss(currentPlan, msg.plan);
+      if (lost) {
+        const version = (await this.ctx.storage.get("version")) || 0;
+        ws.send(JSON.stringify({
+          type: "error",
+          message: "Only an admin can delete " + lost + ". Nothing was changed.",
+        }));
+        return ws.send(JSON.stringify({ type: "sync", plan: currentPlan, version, by: null }));
+      }
     }
 
     // Last write wins. With a handful of planners this is fine, but a client that
