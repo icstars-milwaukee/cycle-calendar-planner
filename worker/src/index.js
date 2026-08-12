@@ -60,6 +60,12 @@ function authorized(request, env) {
  */
 const CAL_TZ = "America/Chicago";
 
+// Wednesday and Friday run virtual (mirrors DAY_MODE in the planner). Workshops on
+// these days become Teams online meetings so every session carries a Join button.
+// From week 3 onward: week 1 is Team Week and week 2 was drafted before this rule.
+const VIRTUAL_DAYS = [2, 4];
+const TEAMS_FROM_WEEK = 3;
+
 // A cycle is always 14 weeks. This is a property of the programme, not a setting:
 // the board describes one week's rhythm and that rhythm runs for the whole cycle.
 const CYCLE_WEEKS = 14;
@@ -226,6 +232,7 @@ function toEvents(plan, room) {
         week: w + 1,
         day: p.day,
         minutes: p.mins,
+        teams: w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0,
       });
     }
   }
@@ -362,6 +369,11 @@ function graphBody(ev) {
     start: ev.start,
     end: ev.end,
     isAllDay: !!ev.isAllDay,
+    // Virtual-day sessions are Teams meetings: Graph generates the join link when an
+    // event is created with these set. They only apply reliably at creation, which is
+    // why converting existing events is done by re-creating them, not patching.
+    isOnlineMeeting: !!ev.teams,
+    onlineMeetingProvider: ev.teams ? "teamsForBusiness" : "unknown",
     // The planner category rides as a real Outlook category, not just body text.
     // Outlook maps the NAME to a color from the calendar's own category list, which
     // Graph does not expose for group mailboxes -- so someone defines each name's
@@ -486,9 +498,17 @@ function reconcile(publishedPlan, room, existingRaw) {
   // run duplicated it; the extras are deleted rather than left for a human to find.
   const seen = new Map();
   let foreign = 0;
+  const foreignSamples = [];
   for (const ev of Array.isArray(existingRaw) ? existingRaw : []) {
     const uid = uidOfExisting(ev, marker);
-    if (!uid) { foreign++; continue; }   // not ours -- never touched
+    if (!uid) {
+      foreign++;   // not ours -- never touched
+      if (foreignSamples.length < 40) {
+        foreignSamples.push({ subject: String(ev.subject || "").slice(0, 80),
+          start: String((ev.start && ev.start.dateTime) || "").slice(0, 16) });
+      }
+      continue;
+    }
     if (!seen.has(uid)) seen.set(uid, []);
     seen.get(uid).push(ev);
   }
@@ -520,7 +540,12 @@ function reconcile(publishedPlan, room, existingRaw) {
     const sameCat = keep.categories === undefined ||
       ((keep.categories || [])[0] || "") === (ev.category || "");
     if (!sameSubject || !sameStart || !sameEnd || !sameCat) {
-      update.push({ uid, eventId: keep.id, event: graphBody(ev) });
+      // Online-meeting fields are creation-only in Graph; patching them onto an
+      // existing event can fail the whole update, so they stay out of PATCH bodies.
+      const body = graphBody(ev);
+      delete body.isOnlineMeeting;
+      delete body.onlineMeetingProvider;
+      update.push({ uid, eventId: keep.id, event: body });
     }
   }
 
@@ -528,6 +553,19 @@ function reconcile(publishedPlan, room, existingRaw) {
   for (const [uid, matches] of seen) {
     if (desired.has(uid)) continue;
     for (const ev of matches) remove.push({ uid, eventId: ev.id, reason: "no longer scheduled" });
+  }
+
+  // ONE-TIME CLEANUP, off by default. Deletes foreign events that were created by this
+  // system under a DIFFERENT room's marker -- strays left by test rooms in the era when
+  // the flow synced any room to the real calendar. DANGER: if two live cycles ever
+  // publish to the same group calendar, this flag would make one delete the other's
+  // events. It must be set for a single run and then removed, never left on.
+  if (publishedPlan.cleanPlannerStrays === true) {
+    for (const ev of Array.isArray(existingRaw) ? existingRaw : []) {
+      if (uidOfExisting(ev, marker)) continue;               // ours -- handled above
+      const anyPlanner = uidOfExisting(ev, "cycle-planner-"); // made by this system, other room
+      if (anyPlanner) remove.push({ uid: anyPlanner, eventId: ev.id, reason: "test stray" });
+    }
   }
 
   return {
@@ -538,6 +576,7 @@ function reconcile(publishedPlan, room, existingRaw) {
     ours: seen.size,
     foreign,
     known,
+    foreignSamples,
     create,
     update,
     delete: remove,
@@ -923,6 +962,7 @@ export class Board {
         delete: (result.delete || []).length,
         changes: result.changes || 0,
         tracked: Object.keys(result.known || {}).length,
+        foreignSamples: result.foreignSamples || [],
       });
       // The uid -> calendar-event-id map, refreshed on every look at the calendar.
       // This is what lets a future edit target its exact event instead of searching.
