@@ -469,6 +469,8 @@ function reconcile(publishedPlan, room, existingRaw) {
   const create = [];
   const update = [];
   const remove = [];
+  // Every board event's calendar identity, refreshed each time the calendar is read.
+  const known = {};
 
   for (const [uid, ev] of desired) {
     const matches = seen.get(uid);
@@ -478,6 +480,7 @@ function reconcile(publishedPlan, room, existingRaw) {
     }
     // Keep the first, drop any duplicates of it.
     const keep = matches[0];
+    known[uid] = keep.id;
     for (let i = 1; i < matches.length; i++) remove.push({ uid, eventId: matches[i].id, reason: "duplicate" });
 
     // Only touch it if what is on the calendar actually differs.
@@ -502,6 +505,7 @@ function reconcile(publishedPlan, room, existingRaw) {
     inspected: (existingRaw || []).length,
     ours: seen.size,
     foreign,
+    known,
     create,
     update,
     delete: remove,
@@ -581,7 +585,7 @@ export default {
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(
-      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe)?$/);
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe|\/ids)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -763,6 +767,15 @@ export class Board {
       });
     }
 
+    // The calendar identity of every board event, as of the last time the calendar was
+    // read. uid -> Graph event id.
+    if (url.pathname.endsWith("/ids")) {
+      return new Response(JSON.stringify({
+        ok: true,
+        ids: (await this.ctx.storage.get("idMap")) || {},
+      }), { headers: { ...cors, "Content-Type": "application/json" } });
+    }
+
     // Asks the flow to look at the calendar now. Used by the planner's "Check calendar"
     // button so someone can confirm the schedule is live without waiting for a publish.
     if (url.pathname.endsWith("/check")) {
@@ -855,7 +868,11 @@ export class Board {
         update: (result.update || []).length,
         delete: (result.delete || []).length,
         changes: result.changes || 0,
+        tracked: Object.keys(result.known || {}).length,
       });
+      // The uid -> calendar-event-id map, refreshed on every look at the calendar.
+      // This is what lets a future edit target its exact event instead of searching.
+      if (result.known) await this.ctx.storage.put("idMap", result.known);
       this.ctx.waitUntil(this.broadcastPublishState(room));
 
       return new Response(JSON.stringify(result), {

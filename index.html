@@ -159,6 +159,13 @@
   .calstate.stale .cs-head { color: var(--danger); }
   /* Publishing is the one action that matters, so it stops competing with eight peers. */
   .actions-spacer { flex: 1; }
+  .live-toggle {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    font-size: 12.5px; font-weight: 600; padding: 8px 12px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft);
+    user-select: none;
+  }
+  .live-toggle.on { border-color: var(--moss); background: var(--moss-soft); color: var(--moss); }
   button.publish {
     background: var(--moss); color: var(--paper); border-color: var(--moss);
     font-size: 13px; padding: 9px 18px;
@@ -568,6 +575,9 @@
     </div>
     <div class="actions">
       <button id="publishBtn" class="publish" type="button" disabled>Publish to calendar</button>
+      <label class="live-toggle" id="liveWrap" title="Publish automatically a few seconds after every edit">
+        <input type="checkbox" id="liveToggle" disabled /> Live sync
+      </label>
       <button id="checkBtn" type="button" disabled>Check calendar</button>
       <span id="publishState" class="pub-pill" role="status">Calendar not connected</span>
       <span id="syncStatus" class="sync-pill off" role="status">Offline board</span>
@@ -873,6 +883,8 @@
   // then (and whenever sync is switched off), so every use is guarded.
   var syncPush = null;
   var applyingRemote = false;
+  // Assigned by the sync layer when live sync is available; called on every local edit.
+  var autoPublishHook = null;
 
   var state = load() || { placed: [], custom: [], seq: 1, cats: seedCats() };
   if (!Array.isArray(state.cats) || !state.cats.length) state.cats = seedCats();
@@ -956,6 +968,7 @@
     // Push before the local write so a blocked localStorage still syncs to the room.
     // applyingRemote stops an incoming update from being echoed straight back out.
     if (syncPush && !applyingRemote) syncPush(state);
+    if (autoPublishHook && !applyingRemote) autoPublishHook();
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       if (warned) { warnEl.classList.remove("show"); warned = false; }
@@ -2354,6 +2367,66 @@
     var checkBtn = document.getElementById("checkBtn");
     var publishing = false;
 
+    // ----- live sync -----
+    // With live sync on, every edit publishes itself a few seconds after the editing
+    // pauses. The debounce turns a burst of drags into one publish; the dirty flag
+    // catches edits made while a publish is already in flight, so nothing is dropped.
+    // Idempotency makes overlapping flow runs safe: reconcile reads the calendar and
+    // transactionId stops a racing create from duplicating.
+    var liveWrap = document.getElementById("liveWrap");
+    var liveToggle = document.getElementById("liveToggle");
+    var autoTimer = null;
+    var autoDirty = false;
+
+    function doPublish(auto) {
+      if (!ws || ws.readyState !== 1) {
+        if (!auto) icsSay("Not connected to the shared board, so there is nothing to publish from.", true);
+        return;
+      }
+      if (!state.groupId) {
+        if (!auto) {
+          icsSay("Choose which group this cycle publishes to first — it is under More.", true);
+          var menu = document.getElementById("toolsMenu");
+          if (menu) menu.open = true;
+          if (groupPickEl) groupPickEl.focus();
+        }
+        return;
+      }
+      if (publishing) { autoDirty = true; return; }
+      publishing = true;
+      publishBtn.disabled = true;
+      publishBtn.textContent = auto ? "Syncing…" : "Publishing…";
+      try { ws.send(JSON.stringify({ type: "publish", by: who })); }
+      catch (e) {
+        publishing = false;
+        publishBtn.disabled = false;
+        publishBtn.textContent = "Publish to calendar";
+        if (!auto) icsSay("Could not publish just now.", true);
+      }
+    }
+
+    function scheduleAutoPublish() {
+      if (!state.liveSync || !state.groupId) return;
+      if (autoTimer) clearTimeout(autoTimer);
+      autoTimer = setTimeout(function () { autoTimer = null; doPublish(true); }, 3500);
+    }
+    autoPublishHook = scheduleAutoPublish;
+
+    if (liveToggle) {
+      liveToggle.addEventListener("change", function () {
+        state.liveSync = liveToggle.checked;
+        liveWrap.classList.toggle("on", liveToggle.checked);
+        save();
+        if (liveToggle.checked) {
+          icsSay("Live sync is on — edits reach the calendar a few seconds after you stop.");
+          scheduleAutoPublish();
+        } else {
+          if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+          icsSay("Live sync is off — the calendar only changes when you press Publish.");
+        }
+      });
+    }
+
     // Asks the flow to look at the calendar and report back, so "is it actually right?"
     // can be answered on demand rather than only after publishing.
     if (checkBtn) {
@@ -2455,6 +2528,15 @@
 
       publishBtn.disabled = publishing;
       if (checkBtn) checkBtn.disabled = !s.everPublished;
+      // The toggle is shared board state, so it follows whoever last changed it.
+      if (liveToggle) {
+        liveToggle.disabled = !s.groupChosen;
+        liveToggle.checked = !!state.liveSync;
+        liveWrap.classList.toggle("on", !!state.liveSync);
+        liveWrap.title = s.groupChosen
+          ? "Publish automatically a few seconds after every edit"
+          : "Choose a group under More first";
+      }
 
       if (!s.everPublished) {
         publishEl.className = "pub-pill dirty";
@@ -2482,30 +2564,15 @@
 
     if (publishBtn) {
       publishBtn.addEventListener("click", function () {
-        if (!ws || ws.readyState !== 1) {
-          icsSay("Not connected to the shared board, so there is nothing to publish from.", true);
-          return;
+        // Live sync already publishes continuously; asking "are you sure?" for each
+        // manual push on top of that would be noise. The confirm belongs to the mode
+        // where publishing is a deliberate, occasional act.
+        if (!state.liveSync) {
+          var note = publishEl && publishEl.textContent ? " (" + publishEl.textContent + ")" : "";
+          if (!window.confirm("Publish this board to the Group calendar?" + note +
+              "\n\nEveryone's calendar will be updated on the next sync.")) return;
         }
-        if (!state.groupId) {
-          icsSay("Choose which group this cycle publishes to first — it is under More.", true);
-          var menu = document.getElementById("toolsMenu");
-          if (menu) menu.open = true;
-          if (groupPickEl) groupPickEl.focus();
-          return;
-        }
-        var note = publishEl && publishEl.textContent ? " (" + publishEl.textContent + ")" : "";
-        if (!window.confirm("Publish this board to the Group calendar?" + note +
-            "\n\nEveryone's calendar will be updated on the next sync.")) return;
-        publishing = true;
-        publishBtn.disabled = true;
-        publishBtn.textContent = "Publishing…";
-        try { ws.send(JSON.stringify({ type: "publish", by: who })); }
-        catch (e) {
-          publishing = false;
-          publishBtn.disabled = false;
-          publishBtn.textContent = "Publish to calendar";
-          icsSay("Could not publish just now.", true);
-        }
+        doPublish(false);
       });
     }
 
@@ -2749,7 +2816,6 @@
 
         if (msg.type === "snapshot") {
           version = msg.version || 0;
-          if (msg.publish) showPublish(msg.publish);
           if (msg.plan) {
             // The room already has a board; it is the shared truth, so adopt it.
             var incoming = null;
@@ -2759,6 +2825,9 @@
             // Empty room, and this browser has a board -- seed the room with it.
             send(state);
           }
+          // After the board is adopted, so the live-sync toggle reads the shared flag
+          // rather than whatever this browser had before joining.
+          if (msg.publish) showPublish(msg.publish);
           peers(msg.peers);
           return;
         }
@@ -2785,6 +2854,8 @@
           publishBtn.textContent = "Published ✓";
           icsSay("Published. The Group calendar updates within a few seconds.");
           setTimeout(function () { publishBtn.textContent = "Publish to calendar"; }, 2200);
+          // Edits arrived while this publish was in flight: send them too.
+          if (autoDirty) { autoDirty = false; scheduleAutoPublish(); }
           return;
         }
         if (msg.type === "error") { syncStatus("bad", "Sync error", msg.message || ""); return; }
