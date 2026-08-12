@@ -233,6 +233,7 @@ function toEvents(plan, room) {
         day: p.day,
         minutes: p.mins,
         teams: w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0,
+        notes: typeof p.notes === "string" ? p.notes.slice(0, 4000) : "",
       });
     }
   }
@@ -386,12 +387,24 @@ function graphBody(ev) {
     transactionId: ev.uid,
     body: {
       contentType: "text",
-      content: "Cycle Calendar Planner" + (ev.category ? " - " + ev.category : "") +
+      // The team's own details lead; the metadata trails. The nh line is a fingerprint
+      // of the details so the reconciler can tell when they changed on the board and
+      // update the event body in place -- comparing full bodies is unreliable because
+      // Outlook rewrites them.
+      content: (ev.notes ? ev.notes + "\n\n----\n" : "") +
+        "Cycle Calendar Planner" + (ev.category ? " - " + ev.category : "") +
         (ev.week ? "\nWeek " + ev.week + " of " + CYCLE_WEEKS : "") +
         "\nDo not edit here; edit the planner and it will be overwritten on the next sync." +
-        "\nref: " + ev.uid,
+        "\nref: " + ev.uid +
+        "\nnh: " + notesHash(ev.notes || ""),
     },
   };
+}
+
+function notesHash(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
 }
 
 function buildSyncPlan(publishedPlan, room, pushed) {
@@ -539,7 +552,13 @@ function reconcile(publishedPlan, room, existingRaw) {
     // uncategorized and rewrite the entire calendar on every run.
     const sameCat = keep.categories === undefined ||
       ((keep.categories || [])[0] || "") === (ev.category || "");
-    if (!sameSubject || !sameStart || !sameEnd || !sameCat) {
+    // Details drift: compare the fingerprint stamped into the body against what the
+    // board wants now. An event with no fingerprint (created before notes existed)
+    // only updates once someone actually writes details for it.
+    const bodyText = String((keep.body && keep.body.content) || keep.bodyPreview || "");
+    const foundNh = (/nh:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || notesHash("");
+    const sameNotes = foundNh === notesHash(ev.notes || "");
+    if (!sameSubject || !sameStart || !sameEnd || !sameCat || !sameNotes) {
       // Online-meeting fields are creation-only in Graph; patching them onto an
       // existing event can fail the whole update, so they stay out of PATCH bodies.
       const body = graphBody(ev);

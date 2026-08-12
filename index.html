@@ -199,6 +199,19 @@
   }
   .tools-note { margin: 0 !important; font-size: 11.5px; color: var(--ink-soft) !important; line-height: 1.45; }
   .tools-sep { border-top: 1px solid var(--line); margin: 3px 0; }
+  /* Details dialog. */
+  #notesText {
+    width: 100%; font: inherit; font-size: 12.5px; line-height: 1.5; padding: 9px 11px;
+    border-radius: 7px; border: 1px solid var(--line); background: var(--paper);
+    color: var(--ink); resize: vertical;
+  }
+  .blk .nt {
+    position: absolute; top: 2px; right: 38px; width: 16px; height: 16px; line-height: 15px;
+    text-align: center; font-size: 10px; border-radius: 4px; cursor: pointer;
+    background: rgba(255,255,255,0.55); color: inherit; opacity: 0; transition: opacity 90ms;
+  }
+  .blk:hover .nt { opacity: 1; }
+  .blk .nt.has { opacity: 0.85; }
   /* Repeat dialog. */
   .rep-label { font-size: 11.5px; font-weight: 700; color: var(--ink-soft); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; }
   .rep-days { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -708,6 +721,21 @@
     <button id="copyToRest" type="button">Apply to week <span id="restFrom"></span> onward</button>
   </div>
 
+  <div class="gate" id="notesBox" hidden>
+    <form class="gate-card" id="notesForm">
+      <h2>Details for <span id="notesWhat"></span></h2>
+      <p>These appear in the calendar event's description, above the planner's own footer.</p>
+      <textarea id="notesText" rows="7" maxlength="4000"
+                placeholder="Agenda, links, prep, facilitator — anything the team should see on the event."></textarea>
+      <p class="rep-note" id="notesSeries"></p>
+      <div class="gate-row">
+        <button type="submit" class="primary">Save for this event</button>
+        <button type="button" id="notesAll" hidden>Save for all <span id="notesAllN"></span></button>
+        <button type="button" id="notesCancel">Cancel</button>
+      </div>
+    </form>
+  </div>
+
   <div class="gate" id="repeatBox" hidden>
     <form class="gate-card" id="repeatForm">
       <h2>Repeat <span id="repeatWhat"></span></h2>
@@ -1047,6 +1075,66 @@
     return state.cats[(idx + 1) % state.cats.length].id;
   }
 
+  // ---------- event details ----------
+  // Details live on each block and become the calendar event's description. A "series"
+  // is the planner's own notion -- every block sharing this one's title, start time and
+  // length across all fourteen weeks -- so saving offers the two things a calendar
+  // user expects: just this occurrence, or the whole series. Editing one never touches
+  // the rest unless the wider save is chosen.
+  var notesBox = document.getElementById("notesBox");
+  var notesTarget = null;
+
+  function seriesOf(p) {
+    var out = [];
+    (state.weeks || []).forEach(function (wk) {
+      (wk || []).forEach(function (q) {
+        if (q.title.toLowerCase() === p.title.toLowerCase() &&
+            q.start === p.start && q.mins === p.mins) out.push(q);
+      });
+    });
+    return out;
+  }
+
+  function openNotes(p) {
+    notesTarget = p;
+    document.getElementById("notesWhat").textContent = "“" + p.title + "”";
+    document.getElementById("notesText").value = p.notes || "";
+    var series = seriesOf(p);
+    var allBtn = document.getElementById("notesAll");
+    if (series.length > 1) {
+      allBtn.hidden = false;
+      document.getElementById("notesAllN").textContent = series.length + " in this series";
+      document.getElementById("notesSeries").textContent =
+        "This workshop repeats " + series.length + " times across the cycle at this time.";
+    } else {
+      allBtn.hidden = true;
+      document.getElementById("notesSeries").textContent = "This is a one-off — no series to apply to.";
+    }
+    notesBox.hidden = false;
+    setTimeout(function () { document.getElementById("notesText").focus(); }, 0);
+  }
+
+  function saveNotes(applyToSeries) {
+    if (!notesTarget) return;
+    var text = document.getElementById("notesText").value.trim();
+    var targets = applyToSeries ? seriesOf(notesTarget) : [notesTarget];
+    targets.forEach(function (b) { b.notes = text || undefined; });
+    notesBox.hidden = true;
+    notesTarget = null;
+    save(); renderAll();
+    icsSay(text
+      ? "Details saved" + (applyToSeries ? " for the whole series." : " for this event.")
+      : "Details cleared" + (applyToSeries ? " for the whole series." : "."));
+  }
+
+  document.getElementById("notesForm").addEventListener("submit", function (e) {
+    e.preventDefault(); saveNotes(false);
+  });
+  document.getElementById("notesAll").addEventListener("click", function () { saveNotes(true); });
+  document.getElementById("notesCancel").addEventListener("click", function () {
+    notesBox.hidden = true; notesTarget = null;
+  });
+
   // ---------- repeating a workshop ----------
   // Building a 14-week cycle by dragging the same workshop 70 times is the single most
   // tedious thing about this tool. Repeat copies one block across the days and weeks
@@ -1147,7 +1235,8 @@
         arr.push({
           uid: "p" + (state.seq++),
           refId: repeatTarget.refId, title: repeatTarget.title, mins: repeatTarget.mins,
-          cat: repeatTarget.cat, day: d, start: repeatTarget.start
+          cat: repeatTarget.cat, day: d, start: repeatTarget.start,
+          notes: repeatTarget.notes
         });
         made++;
       });
@@ -1266,11 +1355,14 @@
         "<span class='d'>" + fmt(p.start) + " – " + fmt(p.start + p.mins) + " · " + p.mins + "m</span>" +
         (roomy ? "<span class='cx' style='color:" + esc(bad ? "var(--danger)" : catPaint(catOf(p)).color) + "'>" +
           esc(cname) + "</span>" : "") +
+        "<button class='nt" + (p.notes ? " has" : "") + "' type='button' aria-label='Edit details' " +
+          "title='" + (p.notes ? "Edit details (has details)" : "Add details") + "'>✎</button>" +
         "<button class='rep' type='button' aria-label='Repeat this workshop' title='Repeat across days and weeks'>⧉</button>" +
         "<button class='x' type='button' aria-label='Send back to shelf' title='Send back to shelf'>×</button>" +
         "<div class='rz' aria-hidden='true'></div>";
       el.addEventListener("pointerdown", function (e) {
-        if (e.target.classList.contains("x") || e.target.classList.contains("rep")) return;
+        if (e.target.classList.contains("x") || e.target.classList.contains("rep") ||
+            e.target.classList.contains("nt")) return;
         if (e.target.classList.contains("rz")) { startResize(e, p); return; }
         startDrag(e, p, "grid");
       });
@@ -1279,6 +1371,7 @@
         save(); renderAll();
       });
       el.querySelector(".rep").addEventListener("click", function () { openRepeat(p); });
+      el.querySelector(".nt").addEventListener("click", function () { openNotes(p); });
       // Clicking the category name on a block moves just that block to the next
       // category -- the fix for every workshop being stuck in whatever the add form
       // stamped on it.
@@ -1932,7 +2025,8 @@
         return {
           uid: "p" + (state.seq++),
           refId: p.refId, title: p.title, mins: p.mins,
-          cat: p.cat, day: p.day, start: p.start
+          cat: p.cat, day: p.day, start: p.start,
+          notes: p.notes
         };
       });
     });
