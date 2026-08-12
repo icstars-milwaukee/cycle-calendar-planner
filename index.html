@@ -2634,8 +2634,8 @@
       refreshBtn.addEventListener("click", function () {
         refreshBtn.disabled = true;
         refreshBtn.textContent = "Asking…";
-        // Ask the flow to look them up again, then re-read after it has had a moment.
-        fetch(base + "/room/" + (room || "cycle21") + "/check?pw=" + encodeURIComponent(pw), { method: "POST" })
+        // Ask the groups flow to look them up again, then re-read after a moment.
+        fetch(base + "/refresh-groups?pw=" + encodeURIComponent(pw), { method: "POST" })
           .catch(function () {})
           .then(function () {
             setTimeout(function () {

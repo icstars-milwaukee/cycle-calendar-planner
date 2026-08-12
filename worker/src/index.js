@@ -510,7 +510,7 @@ function corsHeaders(origin) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
     const cors = corsHeaders(origin);
@@ -530,6 +530,25 @@ export default {
     if (url.pathname === "/auth") {
       if (!authorized(request, env)) return deny(cors);
       return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // Asks the groups flow to refresh the list now. Separate from the calendar flow on
+    // purpose: refreshing groups should not run a calendar sync, and either flow being
+    // broken should not take the other down.
+    if (url.pathname === "/refresh-groups") {
+      if (!authorized(request, env)) return deny(cors);
+      if (request.method !== "POST") {
+        return new Response("POST required", { status: 405, headers: cors });
+      }
+      if (!env.GROUPS_WEBHOOK) {
+        return new Response(JSON.stringify({ ok: false, error: "No groups flow is configured." }), {
+          status: 503, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      ctx.waitUntil(fetch(env.GROUPS_WEBHOOK, { method: "POST" }).catch(() => {}));
+      return new Response(JSON.stringify({ ok: true, asked: true }), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
     }
