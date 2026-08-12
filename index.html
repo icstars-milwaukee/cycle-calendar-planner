@@ -290,7 +290,12 @@
   .cycle-item:hover { border-color: var(--moss); background: var(--moss-soft); }
   .cycle-item .ci-name { font-weight: 700; font-size: 13px; }
   .cycle-item .ci-dates { font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
-  .cycle-item .ci-go { margin-left: auto; color: var(--ink-soft); font-size: 16px; }
+  .cycle-item .ci-go { color: var(--ink-soft); font-size: 16px; }
+  .cycle-item .ci-del {
+    margin-left: auto; width: 22px; height: 22px; line-height: 20px; text-align: center;
+    border-radius: 5px; color: var(--ink-soft); font-size: 14px; cursor: pointer;
+  }
+  .cycle-item .ci-del:hover { background: var(--danger-soft); color: var(--danger); }
   .cycle-none { font-size: 12px; color: var(--ink-soft); margin: 0 0 16px; }
   /* Which calendars this can publish to, visible on the way in rather than buried. */
   .chooser-groups { border-top: 1px solid var(--line); padding-top: 12px; margin-bottom: 16px; }
@@ -666,6 +671,8 @@
         <input type="text" id="newCycleName" maxlength="60" placeholder="Cycle 21" />
         <label for="newCycleStart">First Monday</label>
         <input type="date" id="newCycleStart" />
+        <label for="newCycleGroup">Publishes to</label>
+        <select id="newCycleGroup"></select>
         <p class="cycle-preview" id="newCyclePreview"></p>
         <p class="gate-err" id="chooserErr" role="alert"></p>
         <div class="gate-row">
@@ -2727,10 +2734,25 @@
         b.type = "button";
         b.className = "cycle-item";
         b.innerHTML = "<span><span class='ci-name'></span><br><span class='ci-dates'>" +
-          prettyDate(c.start) + " – " + prettyDate(c.end) + " · 14 weeks</span></span>" +
+          prettyDate(c.start) + " – " + prettyDate(c.end) + " · 14 weeks" +
+          (c.groupName ? " · → " : "") + "</span></span>" +
+          "<span class='ci-del' title='Remove this cycle' aria-label='Remove this cycle'>×</span>" +
           "<span class='ci-go'>→</span>";
         b.querySelector(".ci-name").textContent = c.name;
+        if (c.groupName) b.querySelector(".ci-dates").textContent += c.groupName;
         b.addEventListener("click", function () { enterCycle(c); });
+        b.querySelector(".ci-del").addEventListener("click", function (e) {
+          e.stopPropagation();
+          if (!window.confirm("Remove “" + c.name + "”?\n\nIts board is erased for everyone. " +
+              "Events already on the calendar stay until cleaned up.")) return;
+          fetch(base + "/cycles?pw=" + encodeURIComponent(pw) + "&id=" + encodeURIComponent(c.id), { method: "DELETE" })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+              if (!j.ok) { chooserErr.textContent = j.error || "Could not remove it."; return; }
+              showChooser();
+            })
+            .catch(function () { chooserErr.textContent = "Could not reach the server."; });
+        });
         cycleListEl.appendChild(b);
       });
     }
@@ -2743,14 +2765,32 @@
       list.innerHTML = "";
       if (!knownGroups.length) {
         list.innerHTML = "<p class='cg-empty'>None loaded yet — press Refresh, then wait a few seconds.</p>";
-        return;
+      } else {
+        knownGroups.forEach(function (g) {
+          var s = document.createElement("span");
+          s.className = "cg-item";
+          s.textContent = g.name;
+          list.appendChild(s);
+        });
       }
-      knownGroups.forEach(function (g) {
-        var s = document.createElement("span");
-        s.className = "cg-item";
-        s.textContent = g.name;
-        list.appendChild(s);
-      });
+      // The same list feeds the create form, so choosing the calendar is part of
+      // creating the cycle rather than a setting to discover afterwards.
+      var sel = document.getElementById("newCycleGroup");
+      if (sel) {
+        var prev = sel.value;
+        sel.innerHTML = "";
+        var none = document.createElement("option");
+        none.value = "";
+        none.textContent = knownGroups.length ? "— choose the group calendar —" : "— none loaded yet —";
+        sel.appendChild(none);
+        knownGroups.forEach(function (g) {
+          var o = document.createElement("option");
+          o.value = g.id;
+          o.textContent = g.name;
+          sel.appendChild(o);
+        });
+        if (prev) sel.value = prev;
+      }
     }
 
     var refreshBtn = document.getElementById("refreshGroups");
@@ -2826,10 +2866,14 @@
       var btn = newForm.querySelector("button[type=submit]");
       btn.disabled = true;
       btn.textContent = "Creating…";
+      var gsel = document.getElementById("newCycleGroup");
+      var gid = gsel ? gsel.value : "";
+      var g = knownGroups.filter(function (x) { return x.id === gid; })[0];
       fetch(base + "/cycles?pw=" + encodeURIComponent(pw), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nm, start: st, by: who }),
+        body: JSON.stringify({ name: nm, start: st, by: who,
+          groupId: gid || null, groupName: g ? g.name : null }),
       }).then(function (r) { return r.json().then(function (j) { return { status: r.status, j: j }; }); })
         .then(function (res) {
           btn.disabled = false;

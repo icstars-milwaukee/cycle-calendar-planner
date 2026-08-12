@@ -685,6 +685,21 @@ export class Directory {
       });
     }
 
+    // Retiring a cycle removes it from the list and erases its board. The calendar is
+    // left alone -- purge it first if its events should go too.
+    if (request.method === "DELETE") {
+      const id = new URL(request.url).searchParams.get("id") || "";
+      const idx = cycles.findIndex((c) => c.id === id);
+      if (idx < 0) return json({ ok: false, error: "No such cycle." }, 404);
+      cycles.splice(idx, 1);
+      await this.ctx.storage.put("cycles", cycles);
+      try {
+        const board = this.env.BOARD.get(this.env.BOARD.idFromName(id));
+        await board.fetch(new Request("https://do/room/" + id + "/wipe", { method: "POST" }));
+      } catch (e) { /* the list entry is gone either way */ }
+      return json({ ok: true, removed: id });
+    }
+
     if (request.method !== "POST") return json({ ok: false, error: "Unsupported method." }, 405);
 
     let body;
@@ -721,6 +736,10 @@ export class Directory {
       name,
       start,
       weeks: CYCLE_WEEKS,
+      // Chosen at creation so publishing works the moment the board opens, instead of
+      // depending on someone finding the setting afterwards.
+      groupId: String(body.groupId || "").slice(0, 64) || null,
+      groupName: String(body.groupName || "").slice(0, 120) || null,
       createdAt: new Date().toISOString(),
       createdBy: String(body.by || "").slice(0, 40) || null,
     };
@@ -735,7 +754,7 @@ export class Directory {
       await board.fetch(new Request("https://do/room/" + id + "/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weekOf: start }),
+        body: JSON.stringify({ weekOf: start, groupId: cycle.groupId, groupName: cycle.groupName }),
       }));
     } catch (e) { /* the board will still pick the week up from the record on open */ }
 
@@ -767,7 +786,10 @@ export class Board {
       const existing = (await this.ctx.storage.get("plan")) || null;
       if (!existing && /^\d{4}-\d{2}-\d{2}$/.test(body.weekOf || "")) {
         await this.ctx.storage.put({
-          plan: { placed: [], custom: [], seq: 1, cats: [], weekOf: body.weekOf },
+          plan: {
+            placed: [], custom: [], seq: 1, cats: [], weekOf: body.weekOf,
+            groupId: body.groupId || null, groupName: body.groupName || null,
+          },
           version: 1,
           updated: new Date().toISOString(),
         });
