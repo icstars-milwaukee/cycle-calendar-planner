@@ -410,6 +410,26 @@
   .spanel.on { display: block; }
   .spanel .stats { margin: 0 0 12px; }
   .spanel .cycle, .spanel .holds { margin: 0 0 12px; }
+  /* Holds editor. */
+  .hold-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    padding: 8px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--paper); margin-bottom: 6px; font-size: 11.5px;
+  }
+  .hold-row .hr-name { font-weight: 700; flex: 1 1 100%; display: flex; align-items: center; gap: 6px; }
+  .hold-row .hr-name .del { margin-left: auto; }
+  .hold-row input[type="time"] {
+    font: inherit; font-size: 11px; padding: 3px 4px; border: 1px solid var(--line);
+    border-radius: 5px; background: var(--surface); color: var(--ink);
+  }
+  .hold-row .hr-days { display: flex; gap: 3px; }
+  .hold-row .hr-days button {
+    padding: 3px 6px; font-size: 10px; border-radius: 5px;
+  }
+  .hold-row .hr-days button.on { border-color: var(--moss); background: var(--moss-soft); color: var(--moss); }
+  .hold-row .hr-block { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--ink-soft); }
+  .hold-times { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+  .blk.cust { background: var(--break-bg); border-left: 3px solid var(--slot-line); color: var(--slot-ink); }
   .shelf h2 { font-size: 11px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-soft); margin: 0 0 4px; }
   .shelf .hint { font-size: 11.5px; color: var(--ink-soft); margin: 0 0 12px; }
   .card {
@@ -858,27 +878,25 @@
           </div>
         </details>
 
-        <details class="holds">
-          <summary>Business holds — fixed weekly minimums</summary>
+        <details class="holds" open>
+          <summary>Business holds <span class="cycle-range" id="holdsTotals"></span></summary>
           <div class="holds-body">
-            <table>
-              <thead>
-                <tr><th>Hold</th><th>When</th><th>Duration</th><th>Per week</th></tr>
-              </thead>
-              <tbody>
-                <tr><td><span class="sw" style="background:var(--moss)"></span>All Skate (morning ritual)</td><td class="n">8:30 – 9:00 AM, daily</td><td class="n">30 min</td><td class="n">150 min</td></tr>
-                <tr><td><span class="sw" style="background:var(--slot-line)"></span>Lunch</td><td class="n">12:00 – 1:00 PM, daily</td><td class="n">60 min</td><td class="n">300 min</td></tr>
-                <tr><td><span class="sw" style="background:var(--tea)"></span>Tea service (prep + High Tea + debrief)</td><td class="n">3:30 – 5:30 PM, Mon/Tue/Thu/Fri</td><td class="n">120 min</td><td class="n">480 min</td></tr>
-                <tr><td><span class="sw" style="background:var(--wellness)"></span>Break</td><td class="n">5:30 – 6:00 PM, Mon/Tue/Thu/Fri</td><td class="n">30 min</td><td class="n">120 min</td></tr>
-                <tr><td><span class="sw" style="background:var(--wellness)"></span>Wellness Workshop</td><td class="n">1:00 – 2:00 PM, Wednesday</td><td class="n">60 min</td><td class="n">60 min</td></tr>
-                <tr><td><span class="sw" style="background:var(--slot-line)"></span>Out of cycle (Wellness Wednesday)</td><td class="n">2:00 PM – end of day, Wednesday</td><td class="n">315 min</td><td class="n">315 min</td></tr>
-                <tr class="total"><td>Total held</td><td class="n">—</td><td class="n">240 min · 465 min Wed</td><td class="n">1,425 min (23h 45m)</td></tr>
-                <tr class="open"><td>Open workshop time</td><td class="n">3 windows · 1 on Wed</td><td class="n">405 min · 180 min Wed</td><td class="n">1,800 min (30h)</td></tr>
-              </tbody>
-            </table>
-            <p class="hold-note"><b>Mon, Tue, Thu, Fri:</b> 9:00–12:00 (180m) · 1:00–3:30 (150m) · 6:00–7:15 (75m)
-            — 405 open minutes. <b>Wednesday:</b> 9:00–12:00 (180m) only — the Wellness Workshop runs 1:00–2:00
-            and the rest of the day is out of cycle, so the planner refuses any drop after 2:00 PM.</p>
+            <p class="cycle-note">The fixed structure of a normal week. Edits apply to this cycle,
+            sync to the whole team, and update the calendar. <b>Hard block</b> means nothing can be
+            scheduled over it.</p>
+            <div id="holdsList"></div>
+            <form class="addform" id="holdForm">
+              <label for="nh-name">Add a hold</label>
+              <input id="nh-name" type="text" placeholder="Hold name" maxlength="40" />
+              <div class="hold-times">
+                <input id="nh-start" type="time" value="09:00" min="08:30" max="19:00" step="900" aria-label="Start" />
+                <span>–</span>
+                <input id="nh-end" type="time" value="10:00" min="08:45" max="19:15" step="900" aria-label="End" />
+              </div>
+              <div class="rep-days" id="nh-days"></div>
+              <label class="holds-opt"><input type="checkbox" id="nh-block" /> hard block</label>
+              <button type="submit">Add hold</button>
+            </form>
           </div>
         </details>
       </div>
@@ -908,17 +926,26 @@
   var MODE_LABEL = { inperson: "In person", virtual: "Virtual" };
   var STORE_KEY = "tf-cycle21-plan-v1";
 
-  // days: which weekday columns a hold applies to (0 = Monday). Omit for all five.
-  var FIXED = [
-    { t: "All Skate",          s: 510,  e: 540,  k: "ritual",   ics: "Hold: Ritual" },
-    { t: "Lunch",              s: 720,  e: 780,  k: "brk",      ics: "Hold: Lunch" },
-    { t: "Wellness Workshop",  s: 780,  e: 840,  k: "wellness", days: [2], ics: "Hold: Wellness Wednesday" },
-    { t: "Out of cycle",       s: 840,  e: 1155, k: "blocked",  days: [2], ics: "Hold: Out of cycle" },
-    { t: "Tea Prep",           s: 930,  e: 960,  k: "tea",      days: [0, 1, 3, 4], ics: "Hold: Tea Service" },
-    { t: "High Tea",           s: 960,  e: 1020, k: "tea",      days: [0, 1, 3, 4], ics: "Hold: Tea Service" },
-    { t: "Tea Debrief",        s: 1020, e: 1050, k: "tea",      days: [0, 1, 3, 4], ics: "Hold: Tea Service" },
-    { t: "Break",              s: 1050, e: 1080, k: "brk",      days: [0, 1, 3, 4], ics: "Hold: Break" }
+  // The default weekly skeleton. Holds are board state (state.holds) so each cycle can
+  // edit its own; this list only seeds a board that has never had holds. Stable ids
+  // matter: they anchor the calendar events, so editing a hold updates its events in
+  // place instead of recreating them. days: 0 = Monday; omitted means all five.
+  var DEFAULT_HOLDS = [
+    { id: "h1", title: "All Skate",         start: 510,  end: 540,  kind: "ritual",   ics: "Hold: Ritual" },
+    { id: "h2", title: "Lunch",             start: 720,  end: 780,  kind: "brk",      ics: "Hold: Lunch" },
+    { id: "h3", title: "Wellness Workshop", start: 780,  end: 840,  kind: "wellness", days: [2], ics: "Hold: Wellness Wednesday" },
+    { id: "h4", title: "Out of cycle",      start: 840,  end: 1155, kind: "blocked",  days: [2], ics: "Hold: Out of cycle" },
+    { id: "h5", title: "Tea Prep",          start: 930,  end: 960,  kind: "tea",      days: [0, 1, 3, 4], ics: "Hold: Tea Service" },
+    { id: "h6", title: "High Tea",          start: 960,  end: 1020, kind: "tea",      days: [0, 1, 3, 4], ics: "Hold: Tea Service" },
+    { id: "h7", title: "Tea Debrief",       start: 1020, end: 1050, kind: "tea",      days: [0, 1, 3, 4], ics: "Hold: Tea Service" },
+    { id: "h8", title: "Break",             start: 1050, end: 1080, kind: "brk",      days: [0, 1, 3, 4], ics: "Hold: Break" }
   ];
+  function boardHolds() {
+    if (!Array.isArray(state.holds)) {
+      state.holds = DEFAULT_HOLDS.map(function (h) { return JSON.parse(JSON.stringify(h)); });
+    }
+    return state.holds;
+  }
 
   // Weeks listed in holdSkipWeeks run without the fixed skeleton -- Team Week is a
   // blank canvas, not All Skate and tea service. Routing every skeleton lookup through
@@ -928,23 +955,30 @@
     return (state && Array.isArray(state.holdSkipWeeks) &&
             state.holdSkipWeeks.indexOf(curWeek) >= 0);
   }
+  // Consumers still see the legacy {t,s,e,k,ics} shape; storage uses the richer one.
   function rawFixedFor(d) {
-    return FIXED.filter(function (f) { return !f.days || f.days.indexOf(d) >= 0; });
+    return boardHolds()
+      .filter(function (h) { return !h.days || h.days.indexOf(d) >= 0; })
+      .map(function (h) {
+        return { t: h.title, s: h.start, e: h.end, k: h.kind || "cust",
+                 ics: h.ics || ("Hold: " + h.title), days: h.days };
+      });
   }
   function fixedFor(d) {
     if (skeletonFreeWeek()) return [];
-    return FIXED.filter(function (f) { return !f.days || f.days.indexOf(d) >= 0; });
+    return rawFixedFor(d);
   }
   function openOf(d) {
     var held = 0;
     fixedFor(d).forEach(function (f) { held += f.e - f.s; });
     return (DAY_END - DAY_START) - held;
   }
-  var WEEK_CAP = (function () {
+  // Computed on demand: holds are board state now, so capacity follows their edits.
+  function weekCap() {
     var t = 0;
     for (var d = 0; d < 5; d++) t += openOf(d);
     return t;
-  })();
+  }
   // A "blocked" hold is a hard stop: cards cannot be dropped or resized into it.
   function blockedHit(day, start, mins) {
     return fixedFor(day).some(function (f) {
@@ -1148,6 +1182,156 @@
     state.cats.forEach(function (c, i) { if (c.id === cur) idx = i; });
     return state.cats[(idx + 1) % state.cats.length].id;
   }
+
+  // ---------- business holds editor ----------
+  // Holds are the cycle's own now. Every change confirms, states that the whole
+  // calendar follows, then syncs like any other board edit.
+  var DOWS3 = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  function minToTime(m) { return pad2(Math.floor(m / 60)) + ":" + pad2(m % 60); }
+  function timeToMin(v) {
+    var m = /^(\d{2}):(\d{2})/.exec(v || "");
+    return m ? (+m[1]) * 60 + (+m[2]) : null;
+  }
+  function holdDays(h) { return h.days || [0, 1, 2, 3, 4]; }
+
+  function renderHoldsEditor() {
+    var list = document.getElementById("holdsList");
+    if (!list) return;
+    var holds = boardHolds();
+
+    var held = 0;
+    holds.forEach(function (h) { held += (h.end - h.start) * holdDays(h).length; });
+    var tot = document.getElementById("holdsTotals");
+    if (tot) tot.textContent = "· " + (held / 60).toFixed(held % 60 ? 2 : 1).replace(/\.?0+$/, "") + "h held per week";
+
+    list.innerHTML = "";
+    holds.forEach(function (h) {
+      var row = document.createElement("div");
+      row.className = "hold-row";
+
+      var name = document.createElement("span");
+      name.className = "hr-name";
+      name.textContent = h.title;
+      var del = document.createElement("button");
+      del.type = "button"; del.className = "del"; del.textContent = "×";
+      del.title = "Delete this hold";
+      del.addEventListener("click", function () {
+        if (!window.confirm("Delete the hold “" + h.title + "”?\n\nIt disappears from every week " +
+            "of this cycle, and its calendar events are removed on the next sync.")) return;
+        state.holds = holds.filter(function (x) { return x !== h; });
+        save(); renderAll();
+      });
+      name.appendChild(del);
+      row.appendChild(name);
+
+      var st = document.createElement("input");
+      st.type = "time"; st.step = 900; st.value = minToTime(h.start);
+      st.setAttribute("aria-label", h.title + " start");
+      var en = document.createElement("input");
+      en.type = "time"; en.step = 900; en.value = minToTime(h.end);
+      en.setAttribute("aria-label", h.title + " end");
+      function timeChange() {
+        var s = timeToMin(st.value), e = timeToMin(en.value);
+        if (s === null || e === null || e <= s || s < DAY_START || e > DAY_END) {
+          window.alert("Times must fall between 8:30 AM and 7:15 PM, and end after they start.");
+          st.value = minToTime(h.start); en.value = minToTime(h.end);
+          return;
+        }
+        if (!window.confirm("Move “" + h.title + "” to " + fmt(s) + " – " + fmt(e) +
+            " for the whole cycle?")) {
+          st.value = minToTime(h.start); en.value = minToTime(h.end);
+          return;
+        }
+        h.start = s; h.end = e;
+        save(); renderAll();
+      }
+      st.addEventListener("change", timeChange);
+      en.addEventListener("change", timeChange);
+      row.appendChild(st);
+      row.appendChild(document.createTextNode("–"));
+      row.appendChild(en);
+
+      var daysWrap = document.createElement("span");
+      daysWrap.className = "hr-days";
+      DOWS3.forEach(function (label, d) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label.slice(0, 2);
+        b.classList.toggle("on", holdDays(h).indexOf(d) >= 0);
+        b.addEventListener("click", function () {
+          var cur = holdDays(h).slice();
+          var idx = cur.indexOf(d);
+          if (idx >= 0) cur.splice(idx, 1); else { cur.push(d); cur.sort(); }
+          if (!cur.length) { window.alert("A hold needs at least one day — delete it instead."); return; }
+          if (!window.confirm((idx >= 0 ? "Remove" : "Add") + " " + label + " for “" + h.title + "”?")) return;
+          h.days = cur.length === 5 ? undefined : cur;
+          save(); renderAll();
+        });
+        daysWrap.appendChild(b);
+      });
+      row.appendChild(daysWrap);
+
+      var blockLab = document.createElement("label");
+      blockLab.className = "hr-block";
+      var blockCb = document.createElement("input");
+      blockCb.type = "checkbox";
+      blockCb.checked = h.kind === "blocked";
+      blockCb.addEventListener("change", function () {
+        if (!window.confirm(blockCb.checked
+            ? "Make “" + h.title + "” a hard block? Nothing can be scheduled over it."
+            : "Allow scheduling over “" + h.title + "”?")) {
+          blockCb.checked = !blockCb.checked;
+          return;
+        }
+        h.kind = blockCb.checked ? "blocked" : (h.kind === "blocked" ? "cust" : h.kind);
+        save(); renderAll();
+      });
+      blockLab.appendChild(blockCb);
+      blockLab.appendChild(document.createTextNode("hard block"));
+      row.appendChild(blockLab);
+
+      list.appendChild(row);
+    });
+  }
+
+  (function initHoldForm() {
+    var daysEl = document.getElementById("nh-days");
+    if (!daysEl) return;
+    var chosen = [0, 1, 2, 3, 4];
+    DOWS3.forEach(function (label, d) {
+      var lab = document.createElement("label");
+      lab.className = "on";
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = true; cb.value = String(d);
+      cb.addEventListener("change", function () { lab.classList.toggle("on", cb.checked); });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(label.slice(0, 2)));
+      daysEl.appendChild(lab);
+    });
+    document.getElementById("holdForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var nm = document.getElementById("nh-name").value.trim();
+      if (!nm) { document.getElementById("nh-name").focus(); return; }
+      var s = timeToMin(document.getElementById("nh-start").value);
+      var en2 = timeToMin(document.getElementById("nh-end").value);
+      if (s === null || en2 === null || en2 <= s || s < DAY_START || en2 > DAY_END) {
+        window.alert("Times must fall between 8:30 AM and 7:15 PM, and end after they start.");
+        return;
+      }
+      var days = [].slice.call(daysEl.querySelectorAll("input:checked")).map(function (i) { return +i.value; });
+      if (!days.length) { window.alert("Pick at least one day."); return; }
+      if (!window.confirm("Add the hold “" + nm + "” (" + fmt(s) + " – " + fmt(en2) + ") to every week of this cycle?")) return;
+      boardHolds().push({
+        id: "h" + (state.seq++) + "-" + Math.random().toString(36).slice(2, 5),
+        title: nm, start: s, end: en2,
+        days: days.length === 5 ? undefined : days,
+        kind: document.getElementById("nh-block").checked ? "blocked" : "cust"
+      });
+      document.getElementById("nh-name").value = "";
+      save(); renderAll();
+      icsSay("Hold “" + nm + "” added to the cycle.");
+    });
+  })();
 
   // ---------- event details ----------
   // Details live on each block and become the calendar event's description. A "series"
@@ -1422,21 +1606,29 @@
         bar.title = sh.who + " on shift · " + fmt(sh.s) + " – " + fmt(sh.e);
         col.appendChild(bar);
       }
-      // Drawn unconditionally; a skeleton-free week hides them with a class on the
-      // grid rather than rebuilding the DOM on every week change.
-      var dayFixed = rawFixedFor(d2);
-      for (var i = 0; i < dayFixed.length; i++) {
-        var f = dayFixed[i];
+      cal.appendChild(col);
+      dayCols.push(col);
+    }
+  }
+
+  // Holds are editable board state, so the skeleton is a render, not a one-time build.
+  // Drawn for every week; a skeleton-free week hides them with a class on the grid.
+  function renderHolds() {
+    for (var d = 0; d < 5; d++) {
+      if (!dayCols[d]) continue;
+      var old = dayCols[d].querySelectorAll(".blk.skel");
+      for (var i = 0; i < old.length; i++) old[i].remove();
+      var dayFixed = rawFixedFor(d);
+      for (var j = 0; j < dayFixed.length; j++) {
+        var f = dayFixed[j];
         var el = document.createElement("div");
         el.className = "blk skel " + f.k;
         el.style.top = ((f.s - DAY_START) * PX) + "px";
         el.style.height = ((f.e - f.s) * PX - 2) + "px";
         if (f.k === "brk") el.textContent = f.t;
-        else el.innerHTML = "<span class='t'>" + f.t + "</span><span class='d'>" + fmt(f.s) + " – " + fmt(f.e) + "</span>";
-        col.appendChild(el);
+        else el.innerHTML = "<span class='t'>" + esc(f.t) + "</span><span class='d'>" + fmt(f.s) + " – " + fmt(f.e) + "</span>";
+        dayCols[d].appendChild(el);
       }
-      cal.appendChild(col);
-      dayCols.push(col);
     }
   }
 
@@ -1524,10 +1716,18 @@
       c.style.setProperty("--edge", catPaint(catOf(w)).color);
       c.title = catName(catOf(w));
       var paint = catPaint(catOf(w));
+      // Total scheduled hours for this workshop across the whole cycle, by title.
+      var cyc = 0;
+      (state.weeks || [state.placed]).forEach(function (wk2) {
+        (wk2 || []).forEach(function (p2) {
+          if (p2.title.toLowerCase() === w.title.toLowerCase()) cyc += p2.mins;
+        });
+      });
+      var cycTxt = cyc ? " · " + (cyc / 60).toFixed(cyc % 60 ? 1 : 0).replace(/\.0$/, "") + "h in cycle" : "";
       c.innerHTML = "<span class='ct'>" + esc(w.title) + "</span>" +
         "<span class='cm'><span class='chip' style='background:" + esc(paint.soft) +
         ";color:" + esc(paint.color) + "'>" + esc(catName(catOf(w))) + "</span>" +
-        "<span class='mn'>" + w.mins + " min</span></span>";
+        "<span class='mn'>" + w.mins + " min" + cycTxt + "</span></span>";
       c.addEventListener("pointerdown", function (e) { startDrag(e, w, "shelf"); });
       // The chip on a shelf card recategorizes the workshop itself, so future
       // placements inherit the new category.
@@ -1561,8 +1761,14 @@
     var total = perDay.reduce(function (a, b) { return a + b; }, 0);
     var shelfCount = WORKSHOPS.length + state.custom.length - state.placed.length;
     var hrs = function (m) { return (m / 60).toFixed(m % 60 ? 2 : 1).replace(/\.?0+$/, "") + "h"; };
+    // Whole-cycle workshop hours, not just the week on screen.
+    var cycleTotal = 0;
+    (state.weeks || [state.placed]).forEach(function (wk) {
+      (wk || []).forEach(function (p) { cycleTotal += p.mins; });
+    });
     var html =
-      "<div class='stat'><b>" + hrs(total) + " / " + hrs(WEEK_CAP) + "</b><span>Scheduled vs capacity</span></div>" +
+      "<div class='stat'><b>" + hrs(total) + " / " + hrs(weekCap()) + "</b><span>This week vs capacity</span></div>" +
+      "<div class='stat'><b>" + hrs(cycleTotal) + "</b><span>Workshop hours, whole cycle</span></div>" +
       "<div class='stat'><b>" + shelfCount + "</b><span>Still on shelf</span></div>" +
       "<div class='stat" + (conflicts ? " warn" : "") + "'><b>" + conflicts + "</b><span>Conflicts</span></div>";
     state.cats.forEach(function (c) {
@@ -1718,7 +1924,7 @@
     legendEl.innerHTML = html;
   }
 
-  function renderAll() { renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); }
+  function renderAll() { renderHolds(); renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); renderHoldsEditor(); }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

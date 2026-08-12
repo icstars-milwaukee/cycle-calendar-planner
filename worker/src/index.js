@@ -158,18 +158,22 @@ function addDaysISO(mondayISO, days) {
  * days omitted means all five. Kept in step with the FIXED array in index.html.
  */
 const HOLDS = [
-  { title: "All Skate",         start: 510,  end: 540 },
-  { title: "Lunch",             start: 720,  end: 780 },
-  { title: "Wellness Workshop", start: 780,  end: 840,  days: [2] },
-  { title: "Out of cycle",      start: 840,  end: 1155, days: [2] },
-  { title: "Tea Prep",          start: 930,  end: 960,  days: [0, 1, 3, 4] },
-  { title: "High Tea",          start: 960,  end: 1020, days: [0, 1, 3, 4] },
-  { title: "Tea Debrief",       start: 1020, end: 1050, days: [0, 1, 3, 4] },
-  { title: "Break",             start: 1050, end: 1080, days: [0, 1, 3, 4] },
+  { id: "h1", title: "All Skate",         start: 510,  end: 540 },
+  { id: "h2", title: "Lunch",             start: 720,  end: 780 },
+  { id: "h3", title: "Wellness Workshop", start: 780,  end: 840,  days: [2] },
+  { id: "h4", title: "Out of cycle",      start: 840,  end: 1155, days: [2] },
+  { id: "h5", title: "Tea Prep",          start: 930,  end: 960,  days: [0, 1, 3, 4] },
+  { id: "h6", title: "High Tea",          start: 960,  end: 1020, days: [0, 1, 3, 4] },
+  { id: "h7", title: "Tea Debrief",       start: 1020, end: 1050, days: [0, 1, 3, 4] },
+  { id: "h8", title: "Break",             start: 1050, end: 1080, days: [0, 1, 3, 4] },
 ];
 
-function holdsForDay(day) {
-  return HOLDS.filter((h) => !h.days || h.days.indexOf(day) >= 0);
+// Holds live on the board now, so each cycle can shape its own week; the constant
+// above only covers boards that have never edited theirs.
+function holdsForDay(plan, day) {
+  const list = Array.isArray(plan.holds) && plan.holds.length ? plan.holds : HOLDS;
+  return list.filter((h) => h && h.title && h.end > h.start &&
+    (!h.days || h.days.indexOf(day) >= 0));
 }
 
 function slug(s) {
@@ -272,9 +276,14 @@ function toEvents(plan, room) {
       for (let d = 0; d < 5; d++) {
         const date = addDaysISO(plan.weekOf, w * 7 + d);
         if (!date || blocked.has(date)) continue;
-        for (const h of holdsForDay(d)) {
+        for (const h of holdsForDay(plan, d)) {
+          // Default holds (ids h1-h8) keep the slug-of-title anchor their existing
+          // calendar events were created under, so this change churns nothing.
+          // Custom holds anchor to their unique id, so retiming or renaming one
+          // updates its events in place rather than duplicating.
+          const anchor = (!h.id || /^h\d$/.test(h.id)) ? slug(h.title) : h.id;
           events.push({
-            uid: prefix + "hold-" + slug(h.title) + "-w" + (w + 1) + "-d" + d,
+            uid: prefix + "hold-" + anchor + "-w" + (w + 1) + "-d" + d,
             subject: h.title,
             category: "Fixed hold",
             start: { dateTime: date + "T" + hhmm(h.start), timeZone: CAL_TZ },
