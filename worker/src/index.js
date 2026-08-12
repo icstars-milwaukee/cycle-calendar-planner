@@ -230,10 +230,32 @@ function toEvents(plan, room) {
     }
   }
 
+  // Weeks that opt out of the daily skeleton entirely -- a team week or off-site is
+  // one banner, not All Skate and tea service. 1-based week numbers.
+  const skipHolds = new Set(Array.isArray(plan.holdSkipWeeks) ? plan.holdSkipWeeks : []);
+
+  // Week-long banners: one all-day event spanning Monday to Friday of the given week.
+  for (const we of Array.isArray(plan.weekEvents) ? plan.weekEvents : []) {
+    const wk = we && we.week | 0;
+    if (wk < 1 || wk > CYCLE_WEEKS || !we.title) continue;
+    const mon = addDaysISO(plan.weekOf, (wk - 1) * 7);
+    events.push({
+      uid: prefix + "weekev-w" + wk + "-" + slug(we.title),
+      subject: String(we.title),
+      category: we.cat || "Team Week",
+      isAllDay: true,
+      start: { dateTime: mon + "T00:00:00", timeZone: CAL_TZ },
+      // All-day ranges are half-open: ending Saturday midnight covers Mon-Fri.
+      end: { dateTime: addDaysISO(mon, 5) + "T00:00:00", timeZone: CAL_TZ },
+      week: wk,
+    });
+  }
+
   // The fixed skeleton, unless someone has turned it off. Emitted per day so a holiday
   // that closes a day removes its rituals too, not just its workshops.
   if (plan.includeHolds !== false) {
     for (let w = 0; w < CYCLE_WEEKS; w++) {
+      if (skipHolds.has(w + 1)) continue;
       for (let d = 0; d < 5; d++) {
         const date = addDaysISO(plan.weekOf, w * 7 + d);
         if (!date || blocked.has(date)) continue;
