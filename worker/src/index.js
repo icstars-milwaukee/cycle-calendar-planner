@@ -143,6 +143,33 @@ function addDaysISO(mondayISO, days) {
   return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate());
 }
 
+/**
+ * The fixed weekly skeleton: the rituals that happen whether or not a workshop is
+ * planned. These live in the planner as a drawn backdrop, never as placed blocks, so
+ * nothing ever sent them to the calendar -- which left the published day missing All
+ * Skate, High Tea and every break. Mirrored here so the calendar shows the real day.
+ *
+ * days omitted means all five. Kept in step with the FIXED array in index.html.
+ */
+const HOLDS = [
+  { title: "All Skate",         start: 510,  end: 540 },
+  { title: "Lunch",             start: 720,  end: 780 },
+  { title: "Wellness Workshop", start: 780,  end: 840,  days: [2] },
+  { title: "Out of cycle",      start: 840,  end: 1155, days: [2] },
+  { title: "Tea Prep",          start: 930,  end: 960,  days: [0, 1, 3, 4] },
+  { title: "High Tea",          start: 960,  end: 1020, days: [0, 1, 3, 4] },
+  { title: "Tea Debrief",       start: 1020, end: 1050, days: [0, 1, 3, 4] },
+  { title: "Break",             start: 1050, end: 1080, days: [0, 1, 3, 4] },
+];
+
+function holdsForDay(day) {
+  return HOLDS.filter((h) => !h.days || h.days.indexOf(day) >= 0);
+}
+
+function slug(s) {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 function hhmm(minutesOfDay) {
   const m = Math.max(0, Math.min(24 * 60 - 1, Math.round(minutesOfDay)));
   return pad2(Math.floor(m / 60)) + ":" + pad2(m % 60) + ":00";
@@ -200,6 +227,30 @@ function toEvents(plan, room) {
         day: p.day,
         minutes: p.mins,
       });
+    }
+  }
+
+  // The fixed skeleton, unless someone has turned it off. Emitted per day so a holiday
+  // that closes a day removes its rituals too, not just its workshops.
+  if (plan.includeHolds !== false) {
+    for (let w = 0; w < CYCLE_WEEKS; w++) {
+      for (let d = 0; d < 5; d++) {
+        const date = addDaysISO(plan.weekOf, w * 7 + d);
+        if (!date || blocked.has(date)) continue;
+        for (const h of holdsForDay(d)) {
+          events.push({
+            uid: prefix + "hold-" + slug(h.title) + "-w" + (w + 1) + "-d" + d,
+            subject: h.title,
+            category: "Fixed hold",
+            start: { dateTime: date + "T" + hhmm(h.start), timeZone: CAL_TZ },
+            end: { dateTime: date + "T" + hhmm(h.end), timeZone: CAL_TZ },
+            week: w + 1,
+            day: d,
+            minutes: h.end - h.start,
+            isHold: true,
+          });
+        }
+      }
     }
   }
 

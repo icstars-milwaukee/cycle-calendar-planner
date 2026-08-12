@@ -192,6 +192,26 @@
   }
   .tools-note { margin: 0 !important; font-size: 11.5px; color: var(--ink-soft) !important; line-height: 1.45; }
   .tools-sep { border-top: 1px solid var(--line); margin: 3px 0; }
+  /* Repeat dialog. */
+  .rep-label { font-size: 11.5px; font-weight: 700; color: var(--ink-soft); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .rep-days { display: flex; gap: 6px; flex-wrap: wrap; }
+  .rep-days label {
+    display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px;
+    font-size: 12px; font-weight: 600; background: var(--paper);
+  }
+  .rep-days label.on { border-color: var(--moss); background: var(--moss-soft); color: var(--moss); }
+  .rep-days label.closed { opacity: 0.45; }
+  .rep-weeks { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+  .rep-weeks label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+  .rep-note { margin: 12px 0 0 !important; font-size: 12px; color: var(--moss) !important; font-weight: 600; }
+  /* The repeat affordance on a placed block. */
+  .blk .rep {
+    position: absolute; top: 2px; right: 20px; width: 16px; height: 16px; line-height: 15px;
+    text-align: center; font-size: 11px; border-radius: 4px; cursor: pointer;
+    background: rgba(255,255,255,0.55); color: inherit; opacity: 0; transition: opacity 90ms;
+  }
+  .blk:hover .rep { opacity: 1; }
   /* Week navigator. */
   .weekbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -265,7 +285,25 @@
   .cycle-item .ci-dates { font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
   .cycle-item .ci-go { margin-left: auto; color: var(--ink-soft); font-size: 16px; }
   .cycle-none { font-size: 12px; color: var(--ink-soft); margin: 0 0 16px; }
+  /* Which calendars this can publish to, visible on the way in rather than buried. */
+  .chooser-groups { border-top: 1px solid var(--line); padding-top: 12px; margin-bottom: 16px; }
+  .cg-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    font-size: 11.5px; font-weight: 700; color: var(--ink-soft);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px;
+  }
+  .cg-head button { padding: 4px 9px; font-size: 11px; }
+  .cg-list { display: flex; flex-wrap: wrap; gap: 5px; }
+  .cg-list .cg-item {
+    font-size: 11.5px; padding: 4px 9px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink-soft);
+  }
+  .cg-empty { font-size: 12px; color: var(--ink-soft); }
   .new-cycle { border-top: 1px solid var(--line); padding-top: 14px; }
+  .new-cycle select {
+    width: 100%; font: inherit; font-size: 13px; padding: 8px 10px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  }
   .new-cycle h3 { margin: 0 0 10px; font-size: 13px; }
   .new-cycle label { display: block; font-size: 11.5px; font-weight: 600; color: var(--ink-soft); margin: 9px 0 4px; }
   .new-cycle input {
@@ -604,6 +642,14 @@
 
       <div id="cycleList" class="cycle-list"></div>
 
+      <div class="chooser-groups" id="chooserGroups">
+        <div class="cg-head">
+          <span>Calendar groups available to you</span>
+          <button type="button" id="refreshGroups">Refresh</button>
+        </div>
+        <div id="chooserGroupList" class="cg-list"></div>
+      </div>
+
       <form id="newCycleForm" class="new-cycle">
         <h3>Start a new cycle</h3>
         <label for="newCycleName">Name</label>
@@ -643,6 +689,29 @@
     <span class="weekbar-spacer"></span>
     <button id="copyToAll" type="button">Apply this week to all 14</button>
     <button id="copyToRest" type="button">Apply to week <span id="restFrom"></span> onward</button>
+  </div>
+
+  <div class="gate" id="repeatBox" hidden>
+    <form class="gate-card" id="repeatForm">
+      <h2>Repeat <span id="repeatWhat"></span></h2>
+      <p>Copies keep the same time. Existing blocks at that time are not disturbed.</p>
+
+      <div class="rep-label">On these days</div>
+      <div class="rep-days" id="repDays"></div>
+
+      <div class="rep-label">Across these weeks</div>
+      <div class="rep-weeks">
+        <label><input type="radio" name="repWeeks" value="this" checked /> This week only</label>
+        <label><input type="radio" name="repWeeks" value="all" /> All 14 weeks</label>
+        <label><input type="radio" name="repWeeks" value="rest" /> This week onward</label>
+      </div>
+
+      <p class="rep-note" id="repNote"></p>
+      <div class="gate-row">
+        <button type="submit" class="primary">Repeat</button>
+        <button type="button" id="repCancel">Cancel</button>
+      </div>
+    </form>
   </div>
 
   <div class="stats" id="stats"></div>
@@ -779,10 +848,11 @@
     { id: "self",       name: "Self & Reflection", color: "var(--cat-self)",       soft: "var(--cat-self-soft)",       fixed: true },
     { id: "business",   name: "Business & Team",   color: "var(--cat-business)",   soft: "var(--cat-business-soft)",   fixed: true }
   ];
+  // Categories are entirely the team's own. There are no preset names: a board starts
+  // with one neutral bucket so a workshop always has somewhere to sit, and every
+  // meaningful category is created by whoever is planning.
   function seedCats() {
-    return DEFAULT_CATS.map(function (c) {
-      return { id: c.id, name: c.name, color: c.color, soft: c.soft, fixed: true };
-    });
+    return [{ id: "uncat", name: "Uncategorized", color: "#8A8578", soft: null, fixed: true }];
   }
 
   var SUPPORTS_MIX = !!(window.CSS && CSS.supports &&
@@ -936,6 +1006,117 @@
   function newCatId() {
     return "k" + (state.seq++) + "-" + Math.random().toString(36).slice(2, 6);
   }
+
+  // ---------- repeating a workshop ----------
+  // Building a 14-week cycle by dragging the same workshop 70 times is the single most
+  // tedious thing about this tool. Repeat copies one block across the days and weeks
+  // chosen, and never beyond week 14 -- the cycle is the boundary.
+  var repeatBox = document.getElementById("repeatBox");
+  var repDaysEl = document.getElementById("repDays");
+  var repNoteEl = document.getElementById("repNote");
+  var repeatTarget = null;
+
+  function dayIsClosed(week, day) {
+    var mon = mondayOfWeek(week);
+    if (!mon) return false;
+    var iso = addDays(mon, day);
+    return holidaysInCycle(state.weekOf).some(function (h) {
+      return h.date === iso && blocksScheduling(iso);
+    });
+  }
+
+  function repChosenDays() {
+    return [].slice.call(repDaysEl.querySelectorAll("input:checked")).map(function (i) {
+      return parseInt(i.value, 10);
+    });
+  }
+
+  function repChosenWeeks() {
+    var mode = (repeatBox.querySelector("input[name=repWeeks]:checked") || {}).value || "this";
+    if (mode === "all") { var a = []; for (var i = 1; i <= CYCLE_WEEKS; i++) a.push(i); return a; }
+    if (mode === "rest") { var b = []; for (var j = curWeek; j <= CYCLE_WEEKS; j++) b.push(j); return b; }
+    return [curWeek];
+  }
+
+  function repPreview() {
+    var days = repChosenDays(), weeks = repChosenWeeks();
+    var made = 0, skippedClosed = 0, skippedBusy = 0;
+    weeks.forEach(function (wk) {
+      days.forEach(function (d) {
+        if (dayIsClosed(wk, d)) { skippedClosed++; return; }
+        if (wk === curWeek && d === repeatTarget.day) return;   // the original
+        var arr = state.weeks[wk - 1] || [];
+        var clash = arr.some(function (q) {
+          return q.day === d && overlaps(repeatTarget.start, repeatTarget.start + repeatTarget.mins,
+                                         q.start, q.start + q.mins);
+        });
+        if (clash) { skippedBusy++; return; }
+        made++;
+      });
+    });
+    var bits = [made + " cop" + (made === 1 ? "y" : "ies") + " will be made"];
+    if (skippedBusy) bits.push(skippedBusy + " skipped (something already there)");
+    if (skippedClosed) bits.push(skippedClosed + " skipped (holiday)");
+    repNoteEl.textContent = bits.join(" · ");
+  }
+
+  function openRepeat(p) {
+    repeatTarget = p;
+    document.getElementById("repeatWhat").textContent = "“" + p.title + "”";
+    repDaysEl.innerHTML = "";
+    for (var d = 0; d < 5; d++) {
+      var closed = dayIsClosed(curWeek, d);
+      var lab = document.createElement("label");
+      lab.className = (d === p.day ? "on" : "") + (closed ? " closed" : "");
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.value = String(d); cb.checked = (d === p.day);
+      cb.addEventListener("change", function () {
+        this.parentNode.classList.toggle("on", this.checked);
+        repPreview();
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(DAYS[d].slice(0, 3) + (closed ? " (closed)" : "")));
+      repDaysEl.appendChild(lab);
+    }
+    [].slice.call(repeatBox.querySelectorAll("input[name=repWeeks]")).forEach(function (r) {
+      r.checked = r.value === "this";
+      r.onchange = repPreview;
+    });
+    repPreview();
+    repeatBox.hidden = false;
+  }
+
+  document.getElementById("repCancel").addEventListener("click", function () {
+    repeatBox.hidden = true; repeatTarget = null;
+  });
+
+  document.getElementById("repeatForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (!repeatTarget) return;
+    var days = repChosenDays(), weeks = repChosenWeeks(), made = 0;
+    weeks.forEach(function (wk) {
+      days.forEach(function (d) {
+        if (dayIsClosed(wk, d)) return;
+        if (wk === curWeek && d === repeatTarget.day) return;
+        var arr = state.weeks[wk - 1] || (state.weeks[wk - 1] = []);
+        var clash = arr.some(function (q) {
+          return q.day === d && overlaps(repeatTarget.start, repeatTarget.start + repeatTarget.mins,
+                                         q.start, q.start + q.mins);
+        });
+        if (clash) return;
+        arr.push({
+          uid: "p" + (state.seq++),
+          refId: repeatTarget.refId, title: repeatTarget.title, mins: repeatTarget.mins,
+          cat: repeatTarget.cat, day: d, start: repeatTarget.start
+        });
+        made++;
+      });
+    });
+    state.placed = state.weeks[curWeek - 1];
+    repeatBox.hidden = true; repeatTarget = null;
+    save(); renderAll();
+    icsSay(made ? "Added " + made + " cop" + (made === 1 ? "y" : "ies") + "." : "Nothing to add — those slots were taken or closed.", !made);
+  });
   function fmt(min) {
     var h = Math.floor(min / 60), m = min % 60;
     var ap = h >= 12 ? "PM" : "AM";
@@ -1045,10 +1226,11 @@
         "<span class='d'>" + fmt(p.start) + " – " + fmt(p.start + p.mins) + " · " + p.mins + "m</span>" +
         (roomy ? "<span class='cx' style='color:" + esc(bad ? "var(--danger)" : catPaint(catOf(p)).color) + "'>" +
           esc(cname) + "</span>" : "") +
+        "<button class='rep' type='button' aria-label='Repeat this workshop' title='Repeat across days and weeks'>⧉</button>" +
         "<button class='x' type='button' aria-label='Send back to shelf' title='Send back to shelf'>×</button>" +
         "<div class='rz' aria-hidden='true'></div>";
       el.addEventListener("pointerdown", function (e) {
-        if (e.target.classList.contains("x")) return;
+        if (e.target.classList.contains("x") || e.target.classList.contains("rep")) return;
         if (e.target.classList.contains("rz")) { startResize(e, p); return; }
         startDrag(e, p, "grid");
       });
@@ -1056,6 +1238,7 @@
         setPlaced(state.placed.filter(function (q) { return q.uid !== p.uid; }));
         save(); renderAll();
       });
+      el.querySelector(".rep").addEventListener("click", function () { openRepeat(p); });
       dayCols[p.day].appendChild(el);
     });
   }
@@ -2435,9 +2618,49 @@
       });
     }
 
+    // Shows which calendars are reachable before anyone commits to a cycle, so the
+    // answer to "can this even publish anywhere?" is visible on the way in.
+    function renderChooserGroups() {
+      var list = document.getElementById("chooserGroupList");
+      if (!list) return;
+      list.innerHTML = "";
+      if (!knownGroups.length) {
+        list.innerHTML = "<p class='cg-empty'>None loaded yet — press Refresh, then wait a few seconds.</p>";
+        return;
+      }
+      knownGroups.forEach(function (g) {
+        var s = document.createElement("span");
+        s.className = "cg-item";
+        s.textContent = g.name;
+        list.appendChild(s);
+      });
+    }
+
+    var refreshBtn = document.getElementById("refreshGroups");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function () {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = "Asking…";
+        // Ask the flow to look them up again, then re-read after it has had a moment.
+        fetch(base + "/room/" + (room || "cycle21") + "/check?pw=" + encodeURIComponent(pw), { method: "POST" })
+          .catch(function () {})
+          .then(function () {
+            setTimeout(function () {
+              loadGroups(base, pw).then(function () {
+                renderChooserGroups();
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = "Refresh";
+              });
+            }, 6000);
+          });
+      });
+    }
+
     function showChooser() {
       chooser.hidden = false;
       chooserErr.textContent = "";
+      renderChooserGroups();
+      loadGroups(base, pw).then(renderChooserGroups);
       cycleListEl.innerHTML = "<p class='cycle-none'>Loading…</p>";
       fetch(base + "/cycles?pw=" + encodeURIComponent(pw))
         .then(function (r) { return r.json(); })
