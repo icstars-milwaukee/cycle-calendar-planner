@@ -237,9 +237,11 @@ function toEvents(plan, room) {
         week: w + 1,
         day: p.day,
         minutes: p.mins,
-        // A skeleton-free week (team week, off-site) runs all in person: no virtual
-        // days, so no Teams links, wherever it sits in the cycle.
-        teams: w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0 && !skipHolds.has(w + 1),
+        // Per-event choice wins; the day rule is only the default. undefined follows
+        // the rule (virtual on Wed/Fri from week 3, never on a skeleton-free week);
+        // true forces a Teams link anywhere; false forces in person anywhere.
+        teams: p.virtual === true ? true : p.virtual === false ? false :
+          (w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0 && !skipHolds.has(w + 1)),
         notes: typeof p.notes === "string" ? p.notes.slice(0, 4000) : "",
       });
     }

@@ -732,6 +732,15 @@
       <p>These appear in the calendar event's description, above the planner's own footer.</p>
       <textarea id="notesText" rows="7" maxlength="4000"
                 placeholder="Agenda, links, prep, facilitator — anything the team should see on the event."></textarea>
+
+      <div class="rep-label">Format</div>
+      <div class="rep-weeks" id="vmodeGroup">
+        <label><input type="radio" name="vmode" value="default" /> Follow the day
+          <span class="vmode-hint" id="vmodeHint"></span></label>
+        <label><input type="radio" name="vmode" value="virtual" /> Virtual — Teams meeting with a join link</label>
+        <label><input type="radio" name="vmode" value="inperson" /> In person — no Teams link</label>
+      </div>
+
       <p class="rep-note" id="notesSeries"></p>
       <div class="gate-row">
         <button type="submit" class="primary">Save for this event</button>
@@ -1103,19 +1112,35 @@
 
   function seriesOf(p) {
     var out = [];
-    (state.weeks || []).forEach(function (wk) {
+    (state.weeks || []).forEach(function (wk, i) {
       (wk || []).forEach(function (q) {
         if (q.title.toLowerCase() === p.title.toLowerCase() &&
-            q.start === p.start && q.mins === p.mins) out.push(q);
+            q.start === p.start && q.mins === p.mins) out.push({ b: q, wk: i + 1 });
       });
     });
     return out;
+  }
+
+  // What a block's format actually is, mirroring the worker's rule: an explicit choice
+  // wins; otherwise Wed/Fri from week 3 are virtual, except on skeleton-free weeks.
+  function effectiveTeams(b, wk) {
+    if (b.virtual === true) return true;
+    if (b.virtual === false) return false;
+    return wk >= 3 && (b.day === 2 || b.day === 4) &&
+      (state.holdSkipWeeks || []).indexOf(wk) < 0;
   }
 
   function openNotes(p) {
     notesTarget = p;
     document.getElementById("notesWhat").textContent = "“" + p.title + "”";
     document.getElementById("notesText").value = p.notes || "";
+    var mode = p.virtual === true ? "virtual" : p.virtual === false ? "inperson" : "default";
+    [].slice.call(document.querySelectorAll("input[name=vmode]")).forEach(function (r) {
+      r.checked = r.value === mode;
+    });
+    var dayDefault = curWeek >= 3 && (p.day === 2 || p.day === 4) && !skeletonFreeWeek();
+    document.getElementById("vmodeHint").textContent =
+      "(" + DAYS[p.day] + (dayDefault ? " is virtual this week)" : " is in person this week)");
     var series = seriesOf(p);
     var allBtn = document.getElementById("notesAll");
     if (series.length > 1) {
@@ -1134,14 +1159,34 @@
   function saveNotes(applyToSeries) {
     if (!notesTarget) return;
     var text = document.getElementById("notesText").value.trim();
-    var targets = applyToSeries ? seriesOf(notesTarget) : [notesTarget];
-    targets.forEach(function (b) { b.notes = text || undefined; });
+    var picked = (document.querySelector("input[name=vmode]:checked") || {}).value || "default";
+    var newVirtual = picked === "virtual" ? true : picked === "inperson" ? false : undefined;
+    var targets = applyToSeries ? seriesOf(notesTarget) : [{ b: notesTarget, wk: curWeek }];
+
+    // Are-you-sure: say exactly what is about to change, and for how many events.
+    var formatChanges = 0;
+    targets.forEach(function (t) {
+      if (effectiveTeams(t.b, t.wk) !==
+          (newVirtual === undefined ? effectiveTeams({ day: t.b.day }, t.wk) : newVirtual)) formatChanges++;
+    });
+    var scope = applyToSeries ? "all " + targets.length + " events in this series" : "this event";
+    var what = "Save details" + (formatChanges ? " and change the format" : "") + " for " + scope + "?";
+    if (formatChanges) what += "\n\n" + formatChanges + " event" + (formatChanges === 1 ? "" : "s") +
+      " will be re-created on the calendar to add or remove the Teams link.";
+    if (!window.confirm(what)) return;
+
+    targets.forEach(function (t) {
+      var before = effectiveTeams(t.b, t.wk);
+      t.b.notes = text || undefined;
+      if (newVirtual === undefined) delete t.b.virtual; else t.b.virtual = newVirtual;
+      // Online-meeting fields only apply at creation, so a format flip needs a fresh
+      // identity: the reconciler deletes the old event and creates the new one.
+      if (effectiveTeams(t.b, t.wk) !== before) t.b.uid = "p" + (state.seq++);
+    });
     notesBox.hidden = true;
     notesTarget = null;
     save(); renderAll();
-    icsSay(text
-      ? "Details saved" + (applyToSeries ? " for the whole series." : " for this event.")
-      : "Details cleared" + (applyToSeries ? " for the whole series." : "."));
+    icsSay("Saved for " + scope + "." + (formatChanges ? " The calendar re-creates " + formatChanges + " event" + (formatChanges === 1 ? "" : "s") + "." : ""));
   }
 
   document.getElementById("notesForm").addEventListener("submit", function (e) {
@@ -1371,7 +1416,8 @@
       el.title = p.title + " · " + cname;
       el.innerHTML =
         "<span class='t'>" + esc(p.title) + "</span>" +
-        "<span class='d'>" + fmt(p.start) + " – " + fmt(p.start + p.mins) + " · " + p.mins + "m</span>" +
+        "<span class='d'>" + fmt(p.start) + " – " + fmt(p.start + p.mins) + " · " + p.mins + "m" +
+          (effectiveTeams(p, curWeek) ? " · <b>Teams</b>" : (p.virtual === false ? " · in person" : "")) + "</span>" +
         (roomy ? "<span class='cx' style='color:" + esc(bad ? "var(--danger)" : catPaint(catOf(p)).color) + "'>" +
           esc(cname) + "</span>" : "") +
         "<button class='nt" + (p.notes ? " has" : "") + "' type='button' aria-label='Edit details' " +
@@ -1386,6 +1432,8 @@
         startDrag(e, p, "grid");
       });
       el.querySelector(".x").addEventListener("click", function () {
+        if (!window.confirm("Remove “" + p.title + "” from " + DAYS[p.day] + "?\n\n" +
+            "It goes back to the shelf, and its calendar event is removed on the next sync.")) return;
         setPlaced(state.placed.filter(function (q) { return q.uid !== p.uid; }));
         save(); renderAll();
       });
@@ -1401,7 +1449,9 @@
         cx.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
         cx.addEventListener("click", function (e) {
           e.stopPropagation();
-          p.cat = nextCatId(catOf(p));
+          var next = nextCatId(catOf(p));
+          if (!window.confirm("Move “" + p.title + "” to the category “" + catName(next) + "”?")) return;
+          p.cat = next;
           save(); renderAll();
         });
       }
@@ -1440,7 +1490,9 @@
         chip.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
         chip.addEventListener("click", function (e) {
           e.stopPropagation();
-          w.cat = nextCatId(catOf(w));
+          var next = nextCatId(catOf(w));
+          if (!window.confirm("Move “" + w.title + "” to the category “" + catName(next) + "”?")) return;
+          w.cat = next;
           save(); renderShelf(); renderStats(); renderLegend();
         });
       }
@@ -2609,6 +2661,12 @@
 
     if (liveToggle) {
       liveToggle.addEventListener("change", function () {
+        if (liveToggle.checked && !window.confirm(
+            "Turn on Live sync?\n\nEvery edit anyone makes will update the group calendar " +
+            "automatically, a few seconds after they pause. No further confirmations per edit.")) {
+          liveToggle.checked = false;
+          return;
+        }
         state.liveSync = liveToggle.checked;
         liveWrap.classList.toggle("on", liveToggle.checked);
         save();
