@@ -307,9 +307,10 @@
   }
   .gate-card h2 { margin: 0 0 8px; font-size: 17px; }
   .gate-card p { margin: 0 0 14px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; }
-  .gate-card input[type="password"] {
+  .gate-card input[type="password"], .gate-card input[type="email"] {
     width: 100%; font: inherit; font-size: 13px; padding: 9px 11px; border-radius: 7px;
     border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+    margin-bottom: 8px; box-sizing: border-box;
   }
   .gate-err { min-height: 1.2em; margin: 8px 0 0 !important; color: var(--danger) !important; font-weight: 600; }
   .gate-row { display: flex; gap: 8px; margin-top: 14px; }
@@ -739,6 +740,8 @@
       <h2>Shared board</h2>
       <p>Enter the team password to join the live board. Without it you can still plan
          on your own, saved only in this browser.</p>
+      <input type="email" id="gateEmail" autocomplete="email"
+             aria-label="Work email" placeholder="you@icstars.org" />
       <input type="password" id="gatePw" autocomplete="current-password"
              aria-label="Team password" placeholder="Password" />
       <p class="gate-err" id="gateErr" role="alert"></p>
@@ -2906,12 +2909,19 @@
     // The password is only ever held in this browser and sent to the Worker over
     // TLS. It is never written into the page source, which is public.
     var PW_KEY = STORE_KEY + "-pw";
+    var EM_KEY = STORE_KEY + "-email";
     var pw = "";
+    var userEmail = "";
     try { pw = localStorage.getItem(PW_KEY) || ""; } catch (e) { pw = ""; }
+    try { userEmail = localStorage.getItem(EM_KEY) || ""; } catch (e) { userEmail = ""; }
+    // The signed-in email is the actor everywhere; the anonymous id only ever backs up
+    // rooms joined without one. The server stamps its own copy regardless.
+    if (userEmail) who = userEmail;
 
     var base = SYNC_URL.replace(/\/$/, "");
     function url() {
-      return base.replace(/^http/, "ws") + "/room/" + room + "?pw=" + encodeURIComponent(pw);
+      return base.replace(/^http/, "ws") + "/room/" + room +
+        "?pw=" + encodeURIComponent(pw) + "&user=" + encodeURIComponent(userEmail);
     }
 
     // ----- publishing -----
@@ -3269,15 +3279,25 @@
     // Check the password before opening a socket: a rejected WebSocket handshake
     // gives the browser no reason code, so "wrong password" would be
     // indistinguishable from "the network is down".
-    function verify(candidate) {
-      return fetch(base + "/auth?pw=" + encodeURIComponent(candidate), { method: "GET" })
-        .then(function (r) { return r.ok; })
+    function verify(candidate, email) {
+      return fetch(base + "/auth?pw=" + encodeURIComponent(candidate) +
+          "&user=" + encodeURIComponent(email || ""), { method: "GET" })
+        .then(function (r) {
+          if (r.ok) return true;
+          return r.json().then(function (j) { return { refused: (j && j.error) || "Not accepted." }; })
+            .catch(function () { return { refused: "Not accepted." }; });
+        })
         .catch(function () { return null; });  // null = could not reach the Worker
     }
 
     function start() {
-      syncStatus("wait", "Checking password…", "");
-      verify(pw).then(function (ok) {
+      syncStatus("wait", "Signing in…", "");
+      if (!userEmail) {
+        syncStatus("off", "Locked", "Sign in with your work email and the team password.");
+        showGate("");
+        return;
+      }
+      verify(pw, userEmail).then(function (ok) {
         if (ok === null) {
           // Worker unreachable. Keep planning locally and retry rather than
           // blocking the whole board behind a login it cannot validate.
@@ -3286,13 +3306,14 @@
           if (!timer) timer = setTimeout(function () { timer = null; start(); }, 15000);
           return;
         }
-        if (!ok) {
+        if (ok !== true) {
           try { localStorage.removeItem(PW_KEY); } catch (e) {}
-          syncStatus("off", "Locked", "Enter the team password to join the shared board.");
-          showGate(pw ? "That password was not accepted." : "");
+          syncStatus("off", "Locked", "Sign in with your work email and the team password.");
+          showGate((ok && ok.refused) || (pw ? "That was not accepted." : ""));
           return;
         }
         try { localStorage.setItem(PW_KEY, pw); } catch (e) {}
+        try { localStorage.setItem(EM_KEY, userEmail); } catch (e) {}
         if (gate) gate.hidden = true;
         loadGroups(base, pw);
         // A cycle has to be chosen before there is a board to connect to.
@@ -3516,8 +3537,18 @@
     });
 
     if (gateForm) {
+      var gateEmailEl = document.getElementById("gateEmail");
+      if (gateEmailEl && userEmail) gateEmailEl.value = userEmail;
       gateForm.addEventListener("submit", function (e) {
         e.preventDefault();
+        var em = (gateEmailEl ? gateEmailEl.value : "").trim().toLowerCase();
+        if (!em || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) {
+          gateErr.textContent = "Enter your work email address.";
+          if (gateEmailEl) gateEmailEl.focus();
+          return;
+        }
+        userEmail = em;
+        who = em;
         pw = gatePw.value;
         gateErr.textContent = "";
         start();

@@ -617,6 +617,24 @@ function reconcile(publishedPlan, room, existingRaw) {
   };
 }
 
+/**
+ * Login identity. Everyone signs in with the team password AND their work email; the
+ * email is validated against an allowlist of domains and bound server-side to the
+ * connection, so every decision in the log carries who made it.
+ *
+ * Honest limit: this asserts identity, it does not prove mailbox ownership -- sending
+ * verification codes needs a sending domain this Cloudflare account does not have.
+ * The shape is ready for that upgrade without changing anything downstream.
+ */
+function emailOk(email, env) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) || e.length > 120) return null;
+  const allowed = String(env.ALLOWED_EMAIL_DOMAINS || "icstars.org")
+    .toLowerCase().split(",").map((d) => d.trim()).filter(Boolean);
+  const domain = e.split("@")[1];
+  return allowed.indexOf(domain) >= 0 ? e : null;
+}
+
 function deny(cors) {
   return new Response(JSON.stringify({ ok: false, error: "Wrong password." }), {
     status: 401,
@@ -654,6 +672,20 @@ export default {
     // opens a socket, since a failed WebSocket handshake surfaces no useful reason.
     if (url.pathname === "/auth") {
       if (!authorized(request, env)) return deny(cors);
+      // If an email was offered, it must be a valid one -- the UI treats this as the
+      // login, so a typo'd or off-domain address is rejected here, before any socket.
+      const offered = url.searchParams.get("user");
+      if (offered !== null) {
+        const user = emailOk(offered, env);
+        if (!user) {
+          return new Response(JSON.stringify({ ok: false, error: "Use your work email address." }), {
+            status: 403, headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true, user }), {
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ ok: true }), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
@@ -1117,6 +1149,18 @@ export class Board {
       return new Response("Expected a WebSocket upgrade", { status: 426, headers: cors });
     }
 
+    // Identity rides the connection: offered at login, validated here, and attached to
+    // the socket so it survives hibernation. Absent is tolerated (tests, old clients);
+    // present-but-invalid is refused.
+    const offeredUser = url.searchParams.get("user");
+    let connUser = null;
+    if (offeredUser !== null && offeredUser !== "") {
+      connUser = emailOk(offeredUser, this.env);
+      if (!connUser) {
+        return new Response("Use your work email address.", { status: 403, headers: cors });
+      }
+    }
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
@@ -1124,6 +1168,7 @@ export class Board {
     // sockets stay open, so idle rooms cost nothing against the free tier's
     // duration budget. Handlers below are called when it wakes.
     this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ u: connUser });
 
     const snapshot = await this.snapshot();
     const publish = await this.publishState(room);
@@ -1221,6 +1266,13 @@ export class Board {
     try { msg = JSON.parse(raw); } catch (e) {
       return ws.send(JSON.stringify({ type: "error", message: "Malformed message." }));
     }
+
+    // Server-stamped actor: the email bound at connect wins over anything the client
+    // writes into a message, so the log records who was signed in, not who a payload
+    // claims to be.
+    let actor = null;
+    try { actor = (ws.deserializeAttachment() || {}).u || null; } catch (e) {}
+    if (actor) msg.by = actor; else if (msg.by) msg.by = String(msg.by).slice(0, 40);
 
     if (msg.type === "ping") return ws.send(JSON.stringify({ type: "pong" }));
 
