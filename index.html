@@ -520,6 +520,29 @@
     border: 1px solid var(--line); border-radius: 5px; background: none; cursor: pointer;
   }
   .cats .addform-note { font-size: 11px; color: var(--ink-soft); margin: 8px 0 0; }
+  .catrow .nm.editable { cursor: text; border-radius: 3px; }
+  .catrow .nm.editable:hover { background: var(--panel-2, rgba(128,128,128,0.12)); }
+  .catrow input.rename {
+    flex: 1 1 auto; min-width: 0; font: inherit; padding: 1px 4px; margin: 0;
+    border: 1px solid var(--accent, var(--line)); border-radius: 3px;
+  }
+
+  /* ---- floating category picker ---- */
+  .catmenu {
+    position: fixed; z-index: 90; min-width: 150px; max-width: 220px;
+    max-height: 260px; overflow-y: auto;
+    background: var(--panel, #fff); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); padding: 4px;
+  }
+  .catmenu button {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    border: none; background: none; padding: 6px 8px; font-size: 12.5px;
+    color: var(--ink); cursor: pointer; border-radius: 5px;
+  }
+  .catmenu button:hover:not(:disabled) { background: var(--panel-2, rgba(128,128,128,0.12)); }
+  .catmenu button:disabled { opacity: 0.6; cursor: default; }
+  .catmenu button i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .catmenu button .cur { margin-left: auto; font-size: 10.5px; color: var(--ink-soft); }
 
   /* ---- grid ---- */
   .cal-scroll { flex: 1 1 auto; overflow: auto; min-height: 0; }
@@ -845,6 +868,9 @@
         <label><input type="radio" name="vmode" value="virtual" /> Virtual — Teams meeting with a join link</label>
         <label><input type="radio" name="vmode" value="inperson" /> In person — no Teams link</label>
       </div>
+
+      <div class="rep-label">Category</div>
+      <select id="notesCat" aria-label="Category for this event"></select>
 
       <p class="rep-note" id="notesSeries"></p>
       <div class="gate-row">
@@ -1275,13 +1301,6 @@
   function newCatId() {
     return "k" + (state.seq++) + "-" + Math.random().toString(36).slice(2, 6);
   }
-  // The category after this one, wrapping. Clicking a category chip steps through the
-  // list -- with a handful of categories that is faster than any dropdown.
-  function nextCatId(cur) {
-    var idx = -1;
-    state.cats.forEach(function (c, i) { if (c.id === cur) idx = i; });
-    return state.cats[(idx + 1) % state.cats.length].id;
-  }
 
   // ---------- business holds editor ----------
   // Holds are the cycle's own now. Every change confirms, states that the whole
@@ -1439,6 +1458,49 @@
   // length across all fourteen weeks -- so saving offers the two things a calendar
   // user expects: just this occurrence, or the whole series. Editing one never touches
   // the rest unless the wider save is chosen.
+  // ---------- floating category picker ----------
+  // Click a category chip anywhere and pick the new category from a list, instead of
+  // cycling blindly through every category one click at a time.
+  var catMenuEl = null;
+  function closeCatMenu() {
+    if (!catMenuEl) return;
+    catMenuEl.parentNode && catMenuEl.parentNode.removeChild(catMenuEl);
+    catMenuEl = null;
+    document.removeEventListener("pointerdown", catMenuAway, true);
+    document.removeEventListener("keydown", catMenuKey, true);
+  }
+  function catMenuAway(e) { if (catMenuEl && !catMenuEl.contains(e.target)) closeCatMenu(); }
+  function catMenuKey(e) { if (e.key === "Escape") closeCatMenu(); }
+  function openCatPicker(anchor, curId, onPick) {
+    closeCatMenu();
+    var m = document.createElement("div");
+    m.className = "catmenu";
+    state.cats.forEach(function (c) {
+      var b = document.createElement("button");
+      b.type = "button";
+      var paint = catPaint(c.id);
+      b.innerHTML = "<i style='background:" + esc(paint.soft) + ";border:1px solid " +
+        esc(paint.color) + "'></i><span>" + esc(c.name) + "</span>" +
+        (c.id === curId ? "<span class='cur'>current</span>" : "");
+      if (c.id === curId) b.disabled = true;
+      b.addEventListener("click", function () {
+        closeCatMenu();
+        onPick(c.id);
+      });
+      m.appendChild(b);
+    });
+    document.body.appendChild(m);
+    var r = anchor.getBoundingClientRect();
+    var w = m.offsetWidth, h = m.offsetHeight;
+    var left = Math.max(6, Math.min(r.left, window.innerWidth - w - 6));
+    var top = r.bottom + 4 + h > window.innerHeight - 6 ? Math.max(6, r.top - h - 4) : r.bottom + 4;
+    m.style.left = left + "px";
+    m.style.top = top + "px";
+    catMenuEl = m;
+    document.addEventListener("pointerdown", catMenuAway, true);
+    document.addEventListener("keydown", catMenuKey, true);
+  }
+
   var notesBox = document.getElementById("notesBox");
   var notesTarget = null;
 
@@ -1473,6 +1535,15 @@
     var dayDefault = curWeek >= 3 && (p.day === 2 || p.day === 4) && !skeletonFreeWeek();
     document.getElementById("vmodeHint").textContent =
       "(" + DAYS[p.day] + (dayDefault ? " is virtual this week)" : " is in person this week)");
+    var catSel = document.getElementById("notesCat");
+    catSel.innerHTML = "";
+    state.cats.forEach(function (c) {
+      var o = document.createElement("option");
+      o.value = c.id;
+      o.textContent = c.name;
+      catSel.appendChild(o);
+    });
+    catSel.value = catOf(p);
     var series = seriesOf(p);
     var allBtn = document.getElementById("notesAll");
     if (series.length > 1) {
@@ -1493,16 +1564,20 @@
     var text = document.getElementById("notesText").value.trim();
     var picked = (document.querySelector("input[name=vmode]:checked") || {}).value || "default";
     var newVirtual = picked === "virtual" ? true : picked === "inperson" ? false : undefined;
+    var newCat = document.getElementById("notesCat").value;
+    if (!catById(newCat)) newCat = catOf(notesTarget);
     var targets = applyToSeries ? seriesOf(notesTarget) : [{ b: notesTarget, wk: curWeek }];
 
     // Are-you-sure: say exactly what is about to change, and for how many events.
-    var formatChanges = 0;
+    var formatChanges = 0, catChanges = 0;
     targets.forEach(function (t) {
       if (effectiveTeams(t.b, t.wk) !==
           (newVirtual === undefined ? effectiveTeams({ day: t.b.day }, t.wk) : newVirtual)) formatChanges++;
+      if (catOf(t.b) !== newCat) catChanges++;
     });
     var scope = applyToSeries ? "all " + targets.length + " events in this series" : "this event";
-    var what = "Save details" + (formatChanges ? " and change the format" : "") + " for " + scope + "?";
+    var what = "Save details" + (formatChanges ? " and change the format" : "") +
+      (catChanges ? " and move to “" + catName(newCat) + "”" : "") + " for " + scope + "?";
     if (formatChanges) what += "\n\n" + formatChanges + " event" + (formatChanges === 1 ? "" : "s") +
       " will be re-created on the calendar to add or remove the Teams link.";
     if (!window.confirm(what)) return;
@@ -1510,6 +1585,7 @@
     targets.forEach(function (t) {
       var before = effectiveTeams(t.b, t.wk);
       t.b.notes = text || undefined;
+      t.b.cat = newCat;
       if (newVirtual === undefined) delete t.b.virtual; else t.b.virtual = newVirtual;
       // Online-meeting fields only apply at creation, so a format flip needs a fresh
       // identity: the reconciler deletes the old event and creates the new one.
@@ -1779,9 +1855,8 @@
       });
       el.querySelector(".rep").addEventListener("click", function () { openRepeat(p); });
       el.querySelector(".nt").addEventListener("click", function () { openNotes(p); });
-      // Clicking the category name on a block moves just that block to the next
-      // category -- the fix for every workshop being stuck in whatever the add form
-      // stamped on it.
+      // Clicking the category name on a block opens the picker for just that block --
+      // the fix for every workshop being stuck in whatever the add form stamped on it.
       var cx = el.querySelector(".cx");
       if (cx) {
         cx.title = "Click to change this block's category";
@@ -1789,10 +1864,11 @@
         cx.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
         cx.addEventListener("click", function (e) {
           e.stopPropagation();
-          var next = nextCatId(catOf(p));
-          if (!window.confirm("Move “" + p.title + "” to the category “" + catName(next) + "”?")) return;
-          p.cat = next;
-          save(); renderAll();
+          openCatPicker(cx, catOf(p), function (id) {
+            if (!window.confirm("Move “" + p.title + "” to the category “" + catName(id) + "”?")) return;
+            p.cat = id;
+            save(); renderAll();
+          });
         });
       }
       dayCols[p.day].appendChild(el);
@@ -1838,10 +1914,11 @@
         chip.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
         chip.addEventListener("click", function (e) {
           e.stopPropagation();
-          var next = nextCatId(catOf(w));
-          if (!window.confirm("Move “" + w.title + "” to the category “" + catName(next) + "”?")) return;
-          w.cat = next;
-          save(); renderShelf(); renderStats(); renderLegend();
+          openCatPicker(chip, catOf(w), function (id) {
+            if (!window.confirm("Move “" + w.title + "” to the category “" + catName(id) + "”?")) return;
+            w.cat = id;
+            save(); renderShelf(); renderStats(); renderLegend();
+          });
         });
       }
       shelf.appendChild(c);
@@ -1944,6 +2021,46 @@
       var nm = document.createElement("span");
       nm.className = "nm";
       nm.textContent = c.name;
+      // Click the name to rename it. Blocks reference categories by id, so a rename
+      // reaches every event wearing it -- the calendar follows on the next sync.
+      if (!c.fixed) {
+        nm.className = "nm editable";
+        nm.title = "Click to rename";
+        nm.addEventListener("click", function () {
+          var inp = document.createElement("input");
+          inp.type = "text";
+          inp.className = "rename";
+          inp.maxLength = 28;
+          inp.value = c.name;
+          row.replaceChild(inp, nm);
+          inp.focus();
+          inp.select();
+          var done = false;
+          function commit() {
+            if (done) return;
+            done = true;
+            var name = inp.value.trim();
+            var dupe = name && state.cats.some(function (x) {
+              return x.id !== c.id && x.name.toLowerCase() === name.toLowerCase();
+            });
+            if (dupe) window.alert("There is already a category called \"" + name + "\".");
+            if (!name || dupe || name === c.name) { renderCats(); return; }
+            var u = usageOf(c.id);
+            if (!window.confirm("Rename “" + c.name + "” to “" + name + "”?" +
+                (u.count ? "\n\n" + u.count + " workshop" + (u.count === 1 ? "" : "s") +
+                  " will follow, and the calendar updates on the next sync." : ""))) {
+              renderCats(); return;
+            }
+            c.name = name;
+            save(); renderCatSelect(); renderAll();
+          }
+          inp.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") { e.preventDefault(); commit(); }
+            if (e.key === "Escape") { done = true; renderCats(); }
+          });
+          inp.addEventListener("blur", commit);
+        });
+      }
       row.appendChild(nm);
 
       var mins = document.createElement("span");
@@ -2024,7 +2141,7 @@
     legendEl.innerHTML = html;
   }
 
-  function renderAll() { renderHolds(); renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); renderHoldsEditor(); }
+  function renderAll() { closeCatMenu(); renderHolds(); renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); renderHoldsEditor(); }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
