@@ -1399,7 +1399,7 @@ export class Board {
     const snapshot = await this.snapshot();
     const publish = await this.publishState(room);
     server.send(JSON.stringify({
-      type: "snapshot", ...snapshot, publish, peers: this.peerCount(),
+      type: "snapshot", ...snapshot, publish, peers: this.peerCount(), who: this.peerList(),
       youAre: { email: connUser, admin: await this.checkAdmin(connUser) },
     }));
     this.broadcastPeers();
@@ -1606,6 +1606,17 @@ export class Board {
     return this.ctx.getWebSockets().length;
   }
 
+  // Who is in the room, from the identity bound to each socket at connect.
+  peerList() {
+    const who = [];
+    for (const ws of this.ctx.getWebSockets()) {
+      let u = null;
+      try { u = (ws.deserializeAttachment() || {}).u || null; } catch (e) { /* gone */ }
+      who.push(u || "guest");
+    }
+    return who;
+  }
+
   broadcast(payload, except) {
     const text = JSON.stringify(payload);
     for (const ws of this.ctx.getWebSockets()) {
@@ -1615,7 +1626,7 @@ export class Board {
   }
 
   broadcastPeers() {
-    this.broadcast({ type: "peers", peers: this.peerCount() });
+    this.broadcast({ type: "peers", peers: this.peerCount(), who: this.peerList() });
   }
 
   async webSocketMessage(ws, raw) {
@@ -1632,6 +1643,18 @@ export class Board {
     if (actor) msg.by = actor; else if (msg.by) msg.by = String(msg.by).slice(0, 40);
 
     if (msg.type === "ping") return ws.send(JSON.stringify({ type: "pong" }));
+
+    // Live presence: where someone's drag is hovering right now. Relayed to the other
+    // sockets and never stored -- ephemeral by design, so it costs no versions, no log
+    // entries, and vanishes with the drag.
+    if (msg.type === "cursor") {
+      return this.broadcast({
+        type: "cursor", by: msg.by || "guest",
+        day: msg.day | 0, min: msg.min | 0, mins: msg.mins | 0, wk: msg.wk | 0,
+        title: String(msg.title || "").slice(0, 80),
+        done: !!msg.done,
+      }, ws);
+    }
 
     // Promote the live board to the snapshot the calendar follows. Explicit and
     // deliberate: nothing anyone drags reaches a calendar until someone does this.

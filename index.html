@@ -250,6 +250,24 @@
   /* The repeat affordance on a placed block. */
   /* Selected block: the target for Ctrl+C. */
   .blk.ws.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+  /* Presence: who's in the room, and their live drag ghosts on the grid. */
+  .who-row { display: inline-flex; gap: 4px; align-items: center; }
+  .who-chip {
+    width: 22px; height: 22px; border-radius: 50%; color: #fff; font-size: 9.5px;
+    font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+    cursor: default; letter-spacing: 0.02em; border: 2px solid transparent;
+  }
+  .who-chip.busy { border-color: var(--ink); animation: whoPulse 1.1s ease-in-out infinite; }
+  @keyframes whoPulse { 50% { transform: scale(1.12); } }
+  .peercur {
+    position: absolute; left: 2px; right: 2px; z-index: 6; pointer-events: none;
+    border: 2px dashed; border-radius: 6px; opacity: 0.85; box-sizing: border-box;
+  }
+  .peercur .pc-name {
+    position: absolute; top: -15px; left: -2px; font-size: 9.5px; font-weight: 700;
+    color: #fff; padding: 1px 6px; border-radius: 4px; white-space: nowrap;
+    max-width: 200px; overflow: hidden; text-overflow: ellipsis;
+  }
   /* The editor dialog's event actions. */
   .ev-actions { margin-bottom: 4px; }
   .ev-actions button.danger { color: var(--danger); border-color: var(--danger); }
@@ -713,6 +731,7 @@
       <button id="checkBtn" type="button" disabled>Check calendar</button>
       <span id="publishState" class="pub-pill" role="status">Calendar not connected</span>
       <span id="syncStatus" class="sync-pill off" role="status">Offline board</span>
+      <span class="who-row" id="whoRow" title="Who's in this room right now"></span>
       <div class="calstate" id="calState"></div>
 
       <span class="actions-spacer"></span>
@@ -2354,10 +2373,91 @@
     legendEl.innerHTML = html;
   }
 
-  function renderAll() { closeCatMenu(); renderHolds(); renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); renderHoldsEditor(); }
+  function renderAll() { closeCatMenu(); renderHolds(); renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); renderHoldsEditor(); renderPeerCursors(); }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  // ---------- presence: who's in the room, and live drag ghosts ----------
+  // While anyone drags, their position streams to the room (day + minute, so it maps
+  // onto every viewer's own zoom) and shows as a dashed ghost with their name. The
+  // header shows a chip per person; a pulsing chip is mid-drag.
+  var sendCursor = function () {};          // replaced by the sync layer once connected
+  var peerCursors = {};                     // name -> {day, min, mins, wk, title, at}
+  var peerWho = [];
+  var selfEmail = null;
+
+  function pcColor(name) {
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+    return "hsl(" + h + ", 55%, 42%)";
+  }
+  function pcName(email) { return String(email || "guest").split("@")[0]; }
+
+  function renderWho() {
+    var row = document.getElementById("whoRow");
+    if (!row) return;
+    row.innerHTML = "";
+    var counts = {};
+    peerWho.forEach(function (e) { counts[e] = (counts[e] || 0) + 1; });
+    Object.keys(counts).forEach(function (email) {
+      var chip = document.createElement("span");
+      chip.className = "who-chip";
+      chip.textContent = pcName(email).slice(0, 2).toUpperCase();
+      chip.style.background = pcColor(email);
+      var busy = peerCursors[email];
+      if (busy) chip.classList.add("busy");
+      chip.title = email +
+        (email === selfEmail ? " — you" : "") +
+        (counts[email] > 1 ? " · " + counts[email] + " tabs" : "") +
+        (busy ? " — dragging “" + busy.title + "”" : "");
+      row.appendChild(chip);
+    });
+  }
+
+  function renderPeerCursors() {
+    [].slice.call(document.querySelectorAll(".peercur")).forEach(function (n) { n.remove(); });
+    var now = Date.now();
+    Object.keys(peerCursors).forEach(function (by) {
+      var c = peerCursors[by];
+      if (now - c.at > 6000) { delete peerCursors[by]; return; }
+      if (c.wk !== curWeek || c.day < 0 || c.day > 4 || !dayCols[c.day]) return;
+      var el = document.createElement("div");
+      el.className = "peercur";
+      var color = pcColor(by);
+      el.style.borderColor = color;
+      el.style.top = ((c.min - DAY_START) * PX) + "px";
+      el.style.height = Math.max(10, c.mins * PX - 2) + "px";
+      var nm = document.createElement("span");
+      nm.className = "pc-name";
+      nm.textContent = pcName(by) + " · " + c.title;
+      nm.style.background = color;
+      el.appendChild(nm);
+      dayCols[c.day].appendChild(el);
+    });
+  }
+
+  function onPeerCursor(msg) {
+    if (msg.done) delete peerCursors[msg.by];
+    else peerCursors[msg.by] = { day: msg.day, min: msg.min, mins: msg.mins,
+                                 wk: msg.wk, title: msg.title, at: Date.now() };
+    renderPeerCursors();
+    renderWho();
+    schedulePcSweep();
+  }
+
+  // A ghost from a dropped connection fades on its own. The sweep only runs while
+  // ghosts exist -- no idle timer.
+  var pcSweep = null;
+  function schedulePcSweep() {
+    if (pcSweep || !Object.keys(peerCursors).length) return;
+    pcSweep = setTimeout(function () {
+      pcSweep = null;
+      renderPeerCursors();   // drops anything stale
+      renderWho();
+      schedulePcSweep();
+    }, 3000);
   }
 
   // ---------- select, copy, paste, duplicate ----------
@@ -2518,12 +2618,20 @@
       col.appendChild(pv);
       drag.preview = pv; drag.overDay = day; drag.dropStart = min; drag.blocked = blocked;
     }
+
+    // Tell the room where this drag hovers, throttled to a trickle.
+    var nowT = Date.now();
+    if (drag.overDay >= 0 && nowT - (drag.curSent || 0) > 90) {
+      drag.curSent = nowT;
+      sendCursor({ day: drag.overDay, min: drag.dropStart, mins: drag.mins, title: drag.item.title });
+    }
   }
 
   function onDragUp() {
     window.removeEventListener("pointermove", onDragMove);
     window.removeEventListener("pointerup", onDragUp);
     if (drag.scrollTimer) clearInterval(drag.scrollTimer);
+    if (drag.started) sendCursor({ done: true });
     dayCols.forEach(function (c) { c.classList.remove("drop-ok"); });
     if (drag.preview) drag.preview.remove();
     if (drag.ghost) drag.ghost.remove();
@@ -4250,6 +4358,9 @@
           // rather than whatever this browser had before joining.
           if (msg.publish) showPublish(msg.publish);
           peers(msg.peers);
+          if (msg.who) { peerWho = msg.who; }
+          if (msg.youAre && msg.youAre.email) selfEmail = msg.youAre.email;
+          renderWho();
           return;
         }
 
@@ -4262,7 +4373,12 @@
         }
 
         if (msg.type === "ack") { version = msg.version || version; peers(); return; }
-        if (msg.type === "peers") { peers(msg.peers); return; }
+        if (msg.type === "peers") {
+          peers(msg.peers);
+          if (msg.who) { peerWho = msg.who; renderWho(); }
+          return;
+        }
+        if (msg.type === "cursor") { onPeerCursor(msg); return; }
         if (msg.type === "publish-state") { showPublish(msg); return; }
         if (msg.type === "publish-result") {
           publishing = false;
@@ -4348,6 +4464,16 @@
       if (debounce) clearTimeout(debounce);
       pending = plan;
       debounce = setTimeout(function () { debounce = null; send(pending); }, 250);
+    };
+
+    // Ephemeral presence: fire-and-forget, never queued -- a lost cursor frame
+    // is meaningless a moment later.
+    sendCursor = function (c) {
+      if (!ws || ws.readyState !== 1) return;
+      c.type = "cursor";
+      c.wk = curWeek;
+      c.by = who;
+      try { ws.send(JSON.stringify(c)); } catch (e) {}
     };
 
     window.addEventListener("beforeunload", function () { closed = true; });
