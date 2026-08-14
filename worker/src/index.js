@@ -780,7 +780,7 @@ export default {
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(
-      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe|\/ids|\/log|\/tamper-test)?$/);
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe|\/ids|\/log|\/tamper-test|\/backups|\/restore-backup)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -1043,6 +1043,68 @@ export class Board {
       });
     }
 
+    // Snapshot history for this room. Admin-only, like everything that can rewind.
+    if (url.pathname.endsWith("/backups")) {
+      if (!(await this.checkAdmin(url.searchParams.get("user")))) {
+        return new Response(JSON.stringify({ ok: false, error: "Admins only." }), {
+          status: 403, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      const listed = this.env.BACKUPS ? await this.env.BACKUPS.list({ prefix: "bk:" + room + ":" }) : { keys: [] };
+      const backups = [];
+      for (const k of listed.keys.slice(-25).reverse()) {
+        try {
+          const v = JSON.parse(await this.env.BACKUPS.get(k.name));
+          backups.push({ key: k.name, at: v.at, reason: v.reason, blocks: v.blocks });
+        } catch (e) { backups.push({ key: k.name }); }
+      }
+      return new Response(JSON.stringify({ ok: true, backups }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    // Puts a snapshot back as the LIVE board. Deliberately does not publish: the
+    // restored board is reviewed on screen, then published like any other change.
+    if (url.pathname.endsWith("/restore-backup")) {
+      if (request.method !== "POST") {
+        return new Response("POST required", { status: 405, headers: cors });
+      }
+      if (!(await this.checkAdmin(url.searchParams.get("user")))) {
+        return new Response(JSON.stringify({ ok: false, error: "Only an admin can restore a backup." }), {
+          status: 403, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      let body;
+      try { body = await request.json(); } catch (e) {
+        return new Response(JSON.stringify({ ok: false, error: "Body was not JSON." }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      const key = String(body.key || "");
+      if (!key.startsWith("bk:" + room + ":")) {
+        return new Response(JSON.stringify({ ok: false, error: "That backup belongs to a different cycle." }), {
+          status: 400, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      const raw = this.env.BACKUPS ? await this.env.BACKUPS.get(key) : null;
+      if (!raw) {
+        return new Response(JSON.stringify({ ok: false, error: "No such backup." }), {
+          status: 404, headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+      // Snapshot the current board first, so a restore is itself reversible.
+      await this.saveBackup(room, "pre-restore");
+      const snap = JSON.parse(raw);
+      const version = ((await this.ctx.storage.get("version")) || 0) + 1;
+      await this.ctx.storage.put({ plan: snap.plan, version, updated: new Date().toISOString() });
+      this.broadcast({ type: "sync", plan: snap.plan, version, by: url.searchParams.get("user") });
+      await this.appendLog({ t: "restore", by: url.searchParams.get("user"), from: snap.at, blocks: snap.blocks });
+      this.ctx.waitUntil(this.broadcastPublishState(room));
+      return new Response(JSON.stringify({ ok: true, restored: snap.at, blocks: snap.blocks }), {
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
     // The room's activity history, newest first.
     if (url.pathname.endsWith("/log")) {
       return new Response(JSON.stringify({
@@ -1087,6 +1149,9 @@ export class Board {
         });
       }
       for (const ws of this.ctx.getWebSockets()) { try { ws.close(); } catch (e) {} }
+      // The last thing that happens before a board dies is a snapshot of it. Wiping,
+      // including via cycle deletion, is therefore always reversible from KV.
+      await this.saveBackup(room, "pre-wipe");
       await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
       return new Response(JSON.stringify({ ok: true, wiped: room }), {
@@ -1344,6 +1409,38 @@ export class Board {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  /**
+   * Snapshots. The whole board is written to KV -- a separate storage system from this
+   * Durable Object -- on every publish (at most once per 10 minutes), once a day via
+   * the guard heartbeat, and unconditionally before anything destroys a board. Sixty
+   * snapshots are kept per room; restore is admin-only and never auto-publishes, so a
+   * restored board is reviewed before it reaches the calendar.
+   */
+  async saveBackup(room, reason) {
+    if (!this.env.BACKUPS) return;
+    const plan = (await this.ctx.storage.get("plan")) || null;
+    if (!plan) return;
+    const ts = new Date().toISOString();
+    const blocks = (Array.isArray(plan.weeks) ? plan.weeks : [plan.placed || []])
+      .reduce((n, w) => n + ((w && w.length) || 0), 0);
+    try {
+      await this.env.BACKUPS.put("bk:" + room + ":" + ts,
+        JSON.stringify({ at: ts, room, reason, blocks, plan }));
+      await this.ctx.storage.put("lastBackupAt", ts);
+      // Prune beyond the newest 60. List returns keys sorted lexicographically, and
+      // ISO timestamps sort chronologically, so the head of the list is the oldest.
+      const listed = await this.env.BACKUPS.list({ prefix: "bk:" + room + ":" });
+      const extra = listed.keys.length - 60;
+      for (let i = 0; i < extra; i++) await this.env.BACKUPS.delete(listed.keys[i].name);
+    } catch (e) { /* a failed backup must never break the operation it rode on */ }
+  }
+
+  async maybeBackup(room, reason, minGapMs) {
+    const last = (await this.ctx.storage.get("lastBackupAt")) || "";
+    if (last && Date.now() - new Date(last).getTime() < minGapMs) return;
+    await this.saveBackup(room, reason);
+  }
+
   // The room's activity log: publishes, sync runs and what they did, pokes and their
   // fate. Bounded so a busy cycle cannot grow storage without limit.
   async appendLog(entry) {
@@ -1494,6 +1591,9 @@ export class Board {
     // and the alarm being momentarily unset made the guard flag flicker false.
     await this.ctx.storage.setAlarm(Date.now() + this.guardInterval());
     await this.notifyFlow(room, new Date().toISOString(), true);
+    // The daily safety net, riding the heartbeat: even a cycle nobody publishes gets
+    // a snapshot a day while it is being planned.
+    await this.maybeBackup(room, "daily", 24 * 60 * 60 * 1000);
   }
 
   async broadcastPublishState(room) {
@@ -1565,6 +1665,7 @@ export class Board {
       // within about a minute.
       this.ctx.waitUntil(this.notifyFlow(room, publishedAt));
       this.ctx.waitUntil(this.ensureGuard(room));
+      this.ctx.waitUntil(this.maybeBackup(room, "publish", 10 * 60 * 1000));
 
       ws.send(JSON.stringify({ type: "publish-result", ok: true, publishedAt, by: msg.by || null }));
       const state = await this.broadcastPublishState(room);

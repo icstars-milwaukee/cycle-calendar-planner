@@ -235,6 +235,7 @@
   .not-admin #catList .del,
   .not-admin .cycle-item .ci-del { display: none; }
   .not-admin #adminBox { display: none; }
+  .not-admin #backupBox { display: none; }
   .admin-row {
     display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 0;
   }
@@ -734,6 +735,14 @@
               <input type="email" id="adminEmail" placeholder="name@icstars.org" aria-label="New admin email" />
               <button type="submit">Add admin</button>
             </form>
+          </div>
+
+          <div class="tools-sep"></div>
+
+          <div id="backupBox">
+            <p class="tools-note"><b>Backups</b> — snapshots taken on publish, daily, and before anything is erased.</p>
+            <button id="backupsShow" type="button">Show backups</button>
+            <div id="backupsList"></div>
           </div>
 
           <div class="tools-sep"></div>
@@ -3034,6 +3043,52 @@
       if (toolsMenuEl.open) renderAdmins();
     });
 
+    // ----- backups -----
+    var backupsListEl = document.getElementById("backupsList");
+    function renderBackups() {
+      backupsListEl.innerHTML = "<p class='tools-note'>Loading…</p>";
+      fetch(base + "/room/" + room + "/backups?pw=" + encodeURIComponent(pw) +
+          "&user=" + encodeURIComponent(userEmail))
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (!j.ok) { backupsListEl.innerHTML = "<p class='tools-note'>" + (j.error || "Could not load.") + "</p>"; return; }
+          if (!j.backups.length) { backupsListEl.innerHTML = "<p class='tools-note'>No snapshots yet — the first publish creates one.</p>"; return; }
+          backupsListEl.innerHTML = "";
+          j.backups.forEach(function (b) {
+            var row = document.createElement("div");
+            row.className = "admin-row";
+            var lbl = document.createElement("span");
+            lbl.textContent = (b.at || "?").slice(0, 16).replace("T", " ") +
+              " · " + (b.reason || "?") + " · " + (b.blocks || 0) + " blocks";
+            row.appendChild(lbl);
+            var btn = document.createElement("button");
+            btn.type = "button"; btn.className = "del"; btn.textContent = "restore";
+            btn.title = "Restore this snapshot as the live board";
+            btn.addEventListener("click", function () {
+              if (!window.confirm("Restore the board from " + (b.at || "this snapshot") + "?\n\n" +
+                  "The current board is snapshotted first, then replaced for everyone. " +
+                  "The calendar does NOT change until someone publishes the restored board.")) return;
+              fetch(base + "/room/" + room + "/restore-backup?pw=" + encodeURIComponent(pw) +
+                  "&user=" + encodeURIComponent(userEmail), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ key: b.key }),
+              }).then(function (r) { return r.json(); })
+                .then(function (res) {
+                  icsSay(res.ok ? "Restored the board from " + res.restored + ". Review it, then publish."
+                    : (res.error || "Could not restore."), !res.ok);
+                })
+                .catch(function () { icsSay("Could not reach the server.", true); });
+            });
+            row.appendChild(btn);
+            backupsListEl.appendChild(row);
+          });
+        })
+        .catch(function () { backupsListEl.innerHTML = "<p class='tools-note'>Could not reach the server.</p>"; });
+    }
+    var backupsShowBtn = document.getElementById("backupsShow");
+    if (backupsShowBtn) backupsShowBtn.addEventListener("click", renderBackups);
+
     // ----- history -----
     // Renders the worker's activity log and derives each publish's fate from what
     // happened after it: a later sync that found nothing to do means completed; a
@@ -3077,6 +3132,12 @@
             " <span class='job " + st.cls + "'></span></div>" +
             "<span class='lg-when'>" + whenTxt + "</span>";
           row.querySelector(".job").textContent = st.label;
+        } else if (e.t === "restore") {
+          row.className = "log-row pub";
+          row.innerHTML = "<div class='lg-head'>Board restored from backup" +
+            (e.by ? " <span class='lg-when'>by " + e.by + "</span>" : "") + "</div>" +
+            "<span class='lg-when'>" + whenTxt + " · snapshot from " + String(e.from || "").slice(0, 16).replace("T", " ") +
+            " · " + (e.blocks || 0) + " blocks</span>";
         } else if (e.t === "poke") {
           row.innerHTML = "<div class='lg-head'>Sync job " + (e.ok ? "queued" : "could not be queued") +
             (e.ok ? "" : " <span class='job bad'></span>") + "</div>" +

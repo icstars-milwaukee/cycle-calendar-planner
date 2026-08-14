@@ -5,6 +5,12 @@
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
 
+  // Versioned snapshots live in KV -- deliberately a different storage system from the
+  // Durable Objects that hold live state, so one failure cannot take both.
+  "kv_namespaces": [
+    { "binding": "BACKUPS", "id": "391bc358b6dd4b279d7fb06b6f4ffbae" }
+  ],
+
   "durable_objects": {
     "bindings": [
       { "name": "BOARD", "class_name": "Board" },
