@@ -234,6 +234,12 @@
   .not-admin .hold-row .del,
   .not-admin #catList .del,
   .not-admin .cycle-item .ci-del { display: none; }
+  .not-admin #adminBox { display: none; }
+  .admin-row {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 0;
+  }
+  .admin-row .fixed-tag { font-size: 10px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.05em; }
+  .admin-row .del { margin-left: auto; }
   /* Repeat dialog. */
   .rep-label { font-size: 11.5px; font-weight: 700; color: var(--ink-soft); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; }
   .rep-days { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -718,6 +724,17 @@
           <button id="importBtn" type="button">Import .ics</button>
           <input type="file" id="icsFile" accept=".ics,text/calendar,text/plain" hidden />
           <button id="exportBtn" type="button">Copy schedule as text</button>
+
+          <div class="tools-sep"></div>
+
+          <div id="adminBox">
+            <p class="tools-note"><b>Admins</b> — the only people who can delete anything.</p>
+            <div id="adminList"></div>
+            <form id="adminForm" class="tools-row">
+              <input type="email" id="adminEmail" placeholder="name@icstars.org" aria-label="New admin email" />
+              <button type="submit">Add admin</button>
+            </form>
+          </div>
 
           <div class="tools-sep"></div>
 
@@ -2941,6 +2958,81 @@
     var calStateEl = document.getElementById("calState");
     var checkBtn = document.getElementById("checkBtn");
     var publishing = false;
+
+    // ----- admin management -----
+    // Any admin can appoint another; founders (from the worker configuration) show as
+    // fixed and cannot be removed here. Removal takes effect on new connections at
+    // once and on open ones within a minute.
+    var adminListEl = document.getElementById("adminList");
+
+    function renderAdmins() {
+      if (!amAdmin || !adminListEl) return;
+      fetch(base + "/admins?pw=" + encodeURIComponent(pw) + "&user=" + encodeURIComponent(userEmail))
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (!j.ok) return;
+          adminListEl.innerHTML = "";
+          j.admins.forEach(function (a) {
+            var row = document.createElement("div");
+            row.className = "admin-row";
+            var nm = document.createElement("span");
+            nm.textContent = a.email;
+            row.appendChild(nm);
+            if (a.fixed) {
+              var tag = document.createElement("span");
+              tag.className = "fixed-tag";
+              tag.textContent = "founder";
+              row.appendChild(tag);
+            } else {
+              var del = document.createElement("button");
+              del.type = "button"; del.className = "del"; del.textContent = "×";
+              del.title = "Remove admin";
+              del.addEventListener("click", function () {
+                if (!window.confirm("Remove " + a.email + " as an admin?\n\nThey keep planning access; they lose the ability to delete.")) return;
+                fetch(base + "/admins?pw=" + encodeURIComponent(pw) + "&user=" + encodeURIComponent(userEmail) +
+                    "&email=" + encodeURIComponent(a.email), { method: "DELETE" })
+                  .then(function (r) { return r.json(); })
+                  .then(function (res) {
+                    icsSay(res.ok ? a.email + " is no longer an admin." : (res.error || "Could not remove."), !res.ok);
+                    renderAdmins();
+                  });
+              });
+              row.appendChild(del);
+            }
+            adminListEl.appendChild(row);
+          });
+        })
+        .catch(function () {});
+    }
+
+    var adminForm = document.getElementById("adminForm");
+    if (adminForm) {
+      adminForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var em = (document.getElementById("adminEmail").value || "").trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) {
+          icsSay("Enter a work email address.", true);
+          return;
+        }
+        if (!window.confirm("Make " + em + " an admin?\n\nAdmins can delete workshops, holds, categories and whole cycles — and appoint other admins.")) return;
+        fetch(base + "/admins?pw=" + encodeURIComponent(pw) + "&user=" + encodeURIComponent(userEmail), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: em }),
+        }).then(function (r) { return r.json(); })
+          .then(function (res) {
+            icsSay(res.ok ? em + " is now an admin." : (res.error || "Could not add."), !res.ok);
+            if (res.ok) document.getElementById("adminEmail").value = "";
+            renderAdmins();
+          })
+          .catch(function () { icsSay("Could not reach the server.", true); });
+      });
+    }
+
+    var toolsMenuEl = document.getElementById("toolsMenu");
+    if (toolsMenuEl) toolsMenuEl.addEventListener("toggle", function () {
+      if (toolsMenuEl.open) renderAdmins();
+    });
 
     // ----- history -----
     // Renders the worker's activity log and derives each publish's fate from what

@@ -636,12 +636,28 @@ function emailOk(email, env) {
 }
 
 // Admins are the only people who can delete anything -- cycles, boards, blocks, holds,
-// categories. Same honesty caveat as login: identity is asserted, not proven.
-function isAdmin(email, env) {
+// categories. Two tiers: founders named in the ADMIN_EMAILS secret, who cannot be
+// removed from the app, and admins appointed by other admins, stored in the Directory.
+// Same honesty caveat as login: identity is asserted, not proven.
+function isFounder(email, env) {
   const e = String(email || "").trim().toLowerCase();
   if (!e) return false;
   return String(env.ADMIN_EMAILS || "").toLowerCase()
     .split(",").map((x) => x.trim()).filter(Boolean).indexOf(e) >= 0;
+}
+
+// Founders plus appointed admins. One subrequest to the Directory; callers on hot
+// paths cache the result.
+async function isAdminFull(email, env) {
+  if (isFounder(email, env)) return true;
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return false;
+  try {
+    const dir = env.CYCLES.get(env.CYCLES.idFromName("directory"));
+    const res = await dir.fetch(new Request("https://do/admins", { method: "GET" }));
+    const j = await res.json();
+    return (j.admins || []).some((a) => a.email === e);
+  } catch (err) { return false; }
 }
 
 /**
@@ -725,7 +741,7 @@ export default {
             status: 403, headers: { ...cors, "Content-Type": "application/json" },
           });
         }
-        return new Response(JSON.stringify({ ok: true, user, admin: isAdmin(user, env) }), {
+        return new Response(JSON.stringify({ ok: true, user, admin: await isAdminFull(user, env) }), {
           headers: { ...cors, "Content-Type": "application/json" },
         });
       }
@@ -756,7 +772,7 @@ export default {
     // The cycle registry. GET lists cycles, POST creates one.
     // /groups holds the Microsoft 365 groups the flow can see, so the planner can offer
     // a real choice instead of a group name compiled into the flow.
-    if (url.pathname === "/cycles" || url.pathname === "/groups") {
+    if (url.pathname === "/cycles" || url.pathname === "/groups" || url.pathname === "/admins") {
       if (!authorized(request, env)) return deny(cors);
       return env.CYCLES.get(env.CYCLES.idFromName("directory")).fetch(request);
     }
@@ -801,6 +817,54 @@ export class Directory {
     const json = (body, status) => new Response(JSON.stringify(body), {
       status: status || 200, headers: { ...cors, "Content-Type": "application/json" },
     });
+
+    // Admin management. Founders come from the ADMIN_EMAILS secret and cannot be
+    // touched here; appointed admins are stored and managed by any current admin.
+    // Internal calls (hostname "do") may read the list; external reads need an admin.
+    if (new URL(request.url).pathname === "/admins") {
+      const aurl = new URL(request.url);
+      const stored = (await this.ctx.storage.get("admins")) || [];
+      const internal = aurl.hostname === "do";
+      const caller = String(aurl.searchParams.get("user") || "").trim().toLowerCase();
+      const callerIsAdmin = isFounder(caller, this.env) || stored.indexOf(caller) >= 0;
+
+      if (request.method === "GET") {
+        if (!internal && !callerIsAdmin) return json({ ok: false, error: "Admins only." }, 403);
+        const founders = String(this.env.ADMIN_EMAILS || "").toLowerCase()
+          .split(",").map((x) => x.trim()).filter(Boolean);
+        return json({
+          ok: true,
+          admins: founders.map((e) => ({ email: e, fixed: true }))
+            .concat(stored.map((e) => ({ email: e, fixed: false }))),
+        });
+      }
+      if (!callerIsAdmin) return json({ ok: false, error: "Only an admin can manage admins." }, 403);
+
+      if (request.method === "POST") {
+        let body;
+        try { body = await request.json(); } catch (e) { return json({ ok: false, error: "Body was not JSON." }, 400); }
+        const email = emailOk(body.email, this.env);
+        if (!email) return json({ ok: false, error: "Use a work email address on an allowed domain." }, 400);
+        if (isFounder(email, this.env) || stored.indexOf(email) >= 0) {
+          return json({ ok: false, error: email + " is already an admin." }, 409);
+        }
+        stored.push(email);
+        await this.ctx.storage.put("admins", stored);
+        return json({ ok: true, added: email, by: caller });
+      }
+      if (request.method === "DELETE") {
+        const email = String(aurl.searchParams.get("email") || "").trim().toLowerCase();
+        if (isFounder(email, this.env)) {
+          return json({ ok: false, error: "Founder admins can only be changed in the worker configuration." }, 400);
+        }
+        const i = stored.indexOf(email);
+        if (i < 0) return json({ ok: false, error: "Not an appointed admin." }, 404);
+        stored.splice(i, 1);
+        await this.ctx.storage.put("admins", stored);
+        return json({ ok: true, removed: email, by: caller });
+      }
+      return json({ ok: false, error: "Unsupported method." }, 405);
+    }
 
     // The planner cannot call Microsoft Graph -- it is a static page with no sign-in, and
     // getting one would need admin consent. The flow can, using the connection that
@@ -856,7 +920,9 @@ export class Directory {
 
     // Retiring a cycle removes it from the list and erases its board. Admin only.
     if (request.method === "DELETE") {
-      if (!isAdmin(new URL(request.url).searchParams.get("user"), this.env)) {
+      const delCaller = String(new URL(request.url).searchParams.get("user") || "").trim().toLowerCase();
+      const delStored = (await this.ctx.storage.get("admins")) || [];
+      if (!isFounder(delCaller, this.env) && delStored.indexOf(delCaller) < 0) {
         return json({ ok: false, error: "Only an admin can remove a cycle." }, 403);
       }
       const id = new URL(request.url).searchParams.get("id") || "";
@@ -1015,7 +1081,7 @@ export class Board {
         return new Response("POST required", { status: 405, headers: cors });
       }
       const registered = await this.guardEligibleRegistry(room);
-      if (registered && !isAdmin(url.searchParams.get("user"), this.env)) {
+      if (registered && !(await this.checkAdmin(url.searchParams.get("user")))) {
         return new Response(JSON.stringify({ ok: false, error: "Only an admin can wipe a cycle." }), {
           status: 403, headers: { ...cors, "Content-Type": "application/json" },
         });
@@ -1035,7 +1101,7 @@ export class Board {
       if (request.method !== "POST") {
         return new Response("POST required", { status: 405, headers: cors });
       }
-      if (!isAdmin(url.searchParams.get("user"), this.env)) {
+      if (!(await this.checkAdmin(url.searchParams.get("user")))) {
         return new Response(JSON.stringify({ ok: false, error: "Only an admin can run the guard drill." }), {
           status: 403, headers: { ...cors, "Content-Type": "application/json" },
         });
@@ -1062,7 +1128,7 @@ export class Board {
       if (request.method !== "POST") {
         return new Response("POST required", { status: 405, headers: cors });
       }
-      if (!isAdmin(url.searchParams.get("user"), this.env)) {
+      if (!(await this.checkAdmin(url.searchParams.get("user")))) {
         return new Response(JSON.stringify({ ok: false, error: "Only an admin can reset tracking." }), {
           status: 403, headers: { ...cors, "Content-Type": "application/json" },
         });
@@ -1269,7 +1335,7 @@ export class Board {
     const publish = await this.publishState(room);
     server.send(JSON.stringify({
       type: "snapshot", ...snapshot, publish, peers: this.peerCount(),
-      youAre: { email: connUser, admin: isAdmin(connUser, this.env) },
+      youAre: { email: connUser, admin: await this.checkAdmin(connUser) },
     }));
     this.broadcastPeers();
     // Revive the guard on any connection -- covers deploys and stalled alarms.
@@ -1378,6 +1444,27 @@ export class Board {
     return Math.max(30, isNaN(n) ? 60 : n) * 1000;
   }
 
+  // Admin lookup for the hot paths: founders answer instantly from the env; appointed
+  // admins come from the Directory, cached for a minute so a drag burst costs one
+  // subrequest, not one per message. The cost: appointment or removal can take up to
+  // a minute to reach an already-open connection.
+  async checkAdmin(email) {
+    if (isFounder(email, this.env)) return true;
+    const e = String(email || "").trim().toLowerCase();
+    if (!e) return false;
+    const now = Date.now();
+    if (!this._adminCache || now - this._adminCache.at > 60000) {
+      try {
+        const dir = this.env.CYCLES.get(this.env.CYCLES.idFromName("directory"));
+        const j = await (await dir.fetch(new Request("https://do/admins", { method: "GET" }))).json();
+        this._adminCache = { at: now, set: new Set((j.admins || []).map((a) => a.email)) };
+      } catch (err) {
+        this._adminCache = { at: now, set: new Set() };
+      }
+    }
+    return this._adminCache.set.has(e);
+  }
+
   async guardEligibleRegistry(room) {
     try {
       const dir = this.env.CYCLES.get(this.env.CYCLES.idFromName("directory"));
@@ -1460,7 +1547,7 @@ export class Board {
         }));
       }
       // Mass-deletion flags are admin-only, wherever the plan came from.
-      if ((plan.purgeAll === true || plan.cleanPlannerStrays === true) && !isAdmin(msg.by, this.env)) {
+      if ((plan.purgeAll === true || plan.cleanPlannerStrays === true) && !(await this.checkAdmin(msg.by))) {
         return ws.send(JSON.stringify({
           type: "publish-result", ok: false,
           error: "Only an admin can publish a purge.",
@@ -1499,7 +1586,7 @@ export class Board {
     // but an update that LOSES a workshop, hold or category is refused unless the
     // signed-in email is an admin, and the client is handed the authoritative board
     // back so its optimistic local copy reverts.
-    if (!isAdmin(actor, this.env)) {
+    if (!(await this.checkAdmin(actor))) {
       const currentPlan = (await this.ctx.storage.get("plan")) || null;
       const lost = detectLoss(currentPlan, msg.plan);
       if (lost) {
