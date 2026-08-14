@@ -268,6 +268,8 @@
   }
   .weekbar-dates { font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
   .weekbar-spacer { flex: 1; }
+  .zoomctl { display: inline-flex; gap: 4px; }
+  .zoomctl button { padding: 6px 9px; min-width: 30px; }
   .weekbar.holiday-week { border-color: var(--danger); background: var(--danger-soft); }
   .weekbar.team-week { border-color: var(--moss); background: var(--moss-soft); }
   .weekbar.team-week .weekbar-dates { color: var(--moss); font-weight: 700; }
@@ -851,6 +853,11 @@
     </div>
     <button id="weekNext" type="button" aria-label="Next week">▶</button>
     <span class="weekbar-spacer"></span>
+    <span class="zoomctl" title="Zoom the day — Ctrl+scroll on the calendar works too">
+      <button id="zoomOut" type="button" aria-label="Zoom out">−</button>
+      <button id="zoomFit" type="button">Fit</button>
+      <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
+    </span>
     <button id="copyToAll" type="button">Apply this week to all 14</button>
     <button id="copyToRest" type="button">Apply to week <span id="restFrom"></span> onward</button>
   </div>
@@ -1939,6 +1946,20 @@
     });
   }
 
+  // The scale is fitPX (whole day on screen) times userZoom (1 = fit). Zooming in
+  // opens the skeleton up and the day scrolls; "Fit" snaps back to everything visible.
+  var fitPX = 16 / 15;
+  var userZoom = 1;
+
+  function rescale() {
+    var px = Math.max(0.55, Math.min(2.6, fitPX * userZoom));
+    if (Math.abs(px - PX) < 0.005) return false;
+    PX = px;
+    applyScale();
+    renderAll();
+    return true;
+  }
+
   function fitDay() {
     var sc = document.querySelector(".cal-scroll");
     if (!sc || !sc.clientHeight) return;
@@ -1946,12 +1967,23 @@
     var chrome = (head ? head.offsetHeight : 42) + 34;   // headers + cal padding/border
     var avail = sc.clientHeight - chrome;
     if (avail < 240) return;   // window too small to fit anything useful: keep scrolling
-    var px = Math.max(0.62, Math.min(16 / 15, avail / (DAY_END - DAY_START)));
-    if (Math.abs(px - PX) < 0.01) return;
-    PX = px;
-    applyScale();
-    renderAll();
+    fitPX = Math.max(0.62, Math.min(16 / 15, avail / (DAY_END - DAY_START)));
+    rescale();
   }
+
+  // anchorY (viewport px) keeps the moment under the cursor in place while zooming.
+  function setZoom(z, anchorY) {
+    var sc = document.querySelector(".cal-scroll");
+    var col = dayCols[0];
+    var before = PX;
+    var minute = null;
+    if (sc && col && anchorY !== undefined) {
+      minute = (anchorY - col.getBoundingClientRect().top) / before;
+    }
+    userZoom = Math.max(1, Math.min(3, z));
+    if (rescale() && minute !== null) sc.scrollTop += minute * (PX - before);
+  }
+
   var fitTimer = null;
   window.addEventListener("resize", function () {
     clearTimeout(fitTimer);
@@ -4381,6 +4413,18 @@
       if (selUid) selectBlock(selUid);   // toggles the selection off
     }
   });
+
+  document.getElementById("zoomIn").addEventListener("click", function () { setZoom(userZoom * 1.25); });
+  document.getElementById("zoomOut").addEventListener("click", function () { setZoom(userZoom / 1.25); });
+  document.getElementById("zoomFit").addEventListener("click", function () { setZoom(1); });
+  (function () {
+    var sc = document.querySelector(".cal-scroll");
+    if (sc) sc.addEventListener("wheel", function (e) {
+      if (!e.ctrlKey) return;   // plain scroll keeps scrolling; Ctrl+scroll zooms
+      e.preventDefault();
+      setZoom(userZoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientY);
+    }, { passive: false });
+  })();
 
   buildGrid();
   renderCatSelect();
