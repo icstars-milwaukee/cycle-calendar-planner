@@ -679,6 +679,7 @@
     </div>
     <div class="actions">
       <span class="brand">Cycle Planner</span>
+      <button id="undoBtn" type="button" disabled title="Undo your last change (Ctrl+Z)">↶ Undo</button>
       <button id="publishBtn" class="publish" type="button" disabled>Publish to calendar</button>
       <label class="live-toggle" id="liveWrap" title="Publish automatically a few seconds after every edit">
         <input type="checkbox" id="liveToggle" disabled /> Live sync
@@ -1113,6 +1114,33 @@
   // regardless; the flag only decides which controls are worth showing.
   var amAdmin = false;
 
+  // ---------- undo ----------
+  // A stack of board states before each local change. Undo walks backwards through
+  // your own edits; a teammate's edit arriving clears the stack, because undoing over
+  // someone else's work would silently destroy it.
+  var undoStack = [];
+  var lastSnap = null;
+  var suppressUndoPush = false;
+
+  function refreshUndoBtn() {
+    var b = document.getElementById("undoBtn");
+    if (b) b.disabled = !undoStack.length;
+  }
+
+  function doUndo() {
+    if (!undoStack.length) { icsSay("Nothing to undo."); return; }
+    var prev = undoStack.pop();
+    state = JSON.parse(prev);
+    migrateWeeks();
+    lastSnap = prev;
+    suppressUndoPush = true;
+    save();
+    suppressUndoPush = false;
+    renderAll();
+    refreshUndoBtn();
+    icsSay("Undone." + (state.liveSync ? " The calendar follows in a few seconds." : ""));
+  }
+
   var state = load() || { placed: [], custom: [], seq: 1, cats: seedCats() };
   if (!Array.isArray(state.cats) || !state.cats.length) state.cats = seedCats();
 
@@ -1193,6 +1221,13 @@
   }
 
   function save() {
+    // Undo bookkeeping: remember the state as it was before this change.
+    if (!applyingRemote && !suppressUndoPush && lastSnap) {
+      undoStack.push(lastSnap);
+      if (undoStack.length > 30) undoStack.shift();
+      refreshUndoBtn();
+    }
+    if (!suppressUndoPush) { try { lastSnap = JSON.stringify(state); } catch (e) {} }
     // Push before the local write so a blocked localStorage still syncs to the room.
     // applyingRemote stops an incoming update from being echoed straight back out.
     if (syncPush && !applyingRemote) syncPush(state);
@@ -3820,6 +3855,11 @@
 
     function applyRemote(next) {
       applyingRemote = true;
+      // A teammate's edit invalidates the local undo history: undoing over it would
+      // silently destroy their work.
+      undoStack = [];
+      try { lastSnap = JSON.stringify(next); } catch (e) { lastSnap = null; }
+      refreshUndoBtn();
       state = next;
       // Re-point state.placed at the week on screen. Without this the alias still refers
       // to the previous state's array and edits would land nowhere visible.
@@ -3884,9 +3924,22 @@
     });
   });
 
+  var undoBtnEl = document.getElementById("undoBtn");
+  if (undoBtnEl) undoBtnEl.addEventListener("click", doUndo);
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+      var t = e.target && e.target.tagName;
+      if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") return;   // let fields keep their own undo
+      e.preventDefault();
+      doUndo();
+    }
+  });
+
   buildGrid();
   renderCatSelect();
   renderAll();
+  try { lastSnap = JSON.stringify(state); } catch (e) {}
+
 })();
 </script>
 </html>
