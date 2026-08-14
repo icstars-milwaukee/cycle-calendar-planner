@@ -305,6 +305,15 @@
     background: rgba(35, 36, 31, 0.55); backdrop-filter: blur(3px);
   }
   .gate[hidden] { display: none; }
+  /* Popover mode: the event editor sits beside the clicked block instead of
+     dimming the whole screen. The overlay stays for click-away-to-close but
+     goes transparent. */
+  .gate.near { background: none; backdrop-filter: none; padding: 0; }
+  .gate.near .gate-card {
+    position: fixed; margin: 0; width: 330px; max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px); overflow-y: auto; padding: 18px 20px;
+    box-shadow: 0 10px 34px rgba(35, 36, 31, 0.3);
+  }
   .gate-card {
     background: var(--surface); color: var(--ink); border: 1px solid var(--line);
     border-radius: 12px; box-shadow: var(--shadow); padding: 24px 26px;
@@ -1571,7 +1580,30 @@
       document.getElementById("notesSeries").textContent = "This is a one-off — no series to apply to.";
     }
     notesBox.hidden = false;
+    positionNotesNear(p);
     setTimeout(function () { document.getElementById("notesText").focus(); }, 0);
+  }
+
+  // The editor opens as a popover beside the clicked block -- to its right when
+  // there is room, to its left otherwise, clamped inside the viewport. Anything
+  // without a block on screen (edge cases) falls back to the centered dialog.
+  function positionNotesNear(p) {
+    var card = notesBox.querySelector(".gate-card");
+    var blk = p && p.uid ? document.querySelector(".blk[data-uid='" + p.uid + "']") : null;
+    if (!blk) {
+      notesBox.classList.remove("near");
+      card.style.left = card.style.top = "";
+      return;
+    }
+    notesBox.classList.add("near");
+    var r = blk.getBoundingClientRect();
+    var cw = card.offsetWidth || 330, ch = card.offsetHeight || 400;
+    var left = r.right + 10;
+    if (left + cw > window.innerWidth - 8) left = r.left - cw - 10;
+    if (left < 8) left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - cw - 8));
+    var top = Math.max(8, Math.min(r.top, window.innerHeight - ch - 8));
+    card.style.left = left + "px";
+    card.style.top = top + "px";
   }
 
   function saveNotes(applyToSeries) {
@@ -1603,6 +1635,20 @@
       return;
     }
     var targets = applyToSeries ? seriesOf(notesTarget) : [{ b: notesTarget, wk: curWeek }];
+
+    // Events cannot stack: every copy must land in open time in its own week.
+    if (timeChanged) {
+      for (var ti = 0; ti < targets.length; ti++) {
+        var tt = targets[ti];
+        var weekArr = (state.weeks && state.weeks[tt.wk - 1]) || state.placed;
+        if (overlapHit(tt.b.day, ns, newMins, tt.b.uid, weekArr)) {
+          window.alert("Events can't stack — " + fmt(ns) + " – " + fmt(ne) +
+            " overlaps another event on " + DAYS[tt.b.day] +
+            (targets.length > 1 ? " in week " + tt.wk : "") + ". Pick an open time.");
+          return;
+        }
+      }
+    }
 
     // Are-you-sure: say exactly what is about to change, and for how many events.
     var formatChanges = 0, catChanges = 0;
@@ -1661,6 +1707,10 @@
   document.getElementById("notesAll").addEventListener("click", function () { saveNotes(true); });
   document.getElementById("notesCancel").addEventListener("click", function () {
     notesBox.hidden = true; notesTarget = null;
+  });
+  // Clicking anywhere off the popover closes it, like any menu.
+  notesBox.addEventListener("pointerdown", function (e) {
+    if (e.target === notesBox) { notesBox.hidden = true; notesTarget = null; }
   });
   document.getElementById("notesDup").addEventListener("click", function () {
     var p = notesTarget;
@@ -2253,6 +2303,15 @@
     }
   }
 
+  // Events cannot stack: anything that places or moves a block must land it in an
+  // open stretch of the day. This is the shared check.
+  function overlapHit(day, start, mins, ignoreUid, arr) {
+    return (arr || state.placed).some(function (q) {
+      return q.uid !== ignoreUid && q.day === day &&
+        overlaps(start, start + mins, q.start, q.start + q.mins);
+    });
+  }
+
   // First start at or after `from` where the block fits on that day without touching
   // another block or a hold; wraps back to the top of the day before giving up.
   function findFreeSlot(day, from, mins) {
@@ -2373,7 +2432,11 @@
       var off = drag.origin === "grid" ? drag.grabMins : drag.mins / 2;
       var min = snap(DAY_START + (y - rect.top) / PX - off);
       min = clampStart(min, drag.mins);
-      var blocked = blockedHit(day, min, drag.mins);
+      var onHold = blockedHit(day, min, drag.mins);
+      var onEvent = overlapHit(day, min, drag.mins,
+        drag.origin === "grid" ? drag.item.uid : null);
+      var blocked = onHold || onEvent;
+      drag.blockCause = onEvent ? "overlap" : onHold ? "hold" : null;
       col.classList.add("drop-ok");
       var pv = document.createElement("div");
       pv.className = "preview" + (blocked ? " bad" : "");
@@ -2403,7 +2466,9 @@
     }
 
     if (drag.overDay >= 0 && drag.blocked) {
-      icsSay("Nothing can be scheduled there \u2014 Wednesday is out of cycle after 2:00 PM.", true);
+      icsSay(drag.blockCause === "overlap"
+        ? "Events can't stack \u2014 drop it on an open stretch of the day."
+        : "Nothing can be scheduled there \u2014 that time is held.", true);
     } else if (drag.overDay >= 0) {
       if (drag.origin === "shelf") {
         state.placed.push({
@@ -2442,6 +2507,10 @@
       var stop = DAY_END;
       fixedFor(p.day).forEach(function (f) {
         if (f.k === "blocked" && f.s >= p.start && f.s < stop) stop = f.s;
+      });
+      // Growing an event must stop where the next one begins -- no stacking.
+      state.placed.forEach(function (q) {
+        if (q.uid !== p.uid && q.day === p.day && q.start >= p.start && q.start < stop) stop = q.start;
       });
       mins = Math.max(15, Math.min(mins, stop - p.start));
       p.mins = mins;
