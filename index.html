@@ -1026,7 +1026,7 @@
 
   var DAY_START = 510;   // 8:30
   var DAY_END = 1155;    // 19:15
-  var PX = 16 / 15;      // px per minute
+  var PX = 16 / 15;      // px per minute; fitDay() shrinks it so the whole day fits on screen
   var COL_H = (DAY_END - DAY_START) * PX;
   var SNAP = 15;
   var DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -1917,6 +1917,47 @@
     }
   }
 
+  // Fit the whole day on screen: shrink the per-minute scale until 8:30-7:15 fits
+  // the calendar area, down to a readable floor. Everything else derives from PX,
+  // so a re-render after rescaling moves every block, hold, and label together.
+  function applyScale() {
+    COL_H = (DAY_END - DAY_START) * PX;
+    var rail = cal.querySelector(".rail");
+    if (rail) {
+      rail.style.height = COL_H + "px";
+      [].slice.call(rail.children).forEach(function (lab, i) {
+        lab.style.top = (((9 + i) * 60 - DAY_START) * PX) + "px";
+      });
+    }
+    dayCols.forEach(function (col) {
+      col.style.height = COL_H + "px";
+      [].slice.call(col.querySelectorAll(".shift")).forEach(function (bar, i) {
+        var sh = SHIFTS[i];
+        bar.style.top = ((Math.max(sh.s, DAY_START) - DAY_START) * PX) + "px";
+        bar.style.height = ((Math.min(sh.e, DAY_END) - Math.max(sh.s, DAY_START)) * PX) + "px";
+      });
+    });
+  }
+
+  function fitDay() {
+    var sc = document.querySelector(".cal-scroll");
+    if (!sc || !sc.clientHeight) return;
+    var head = cal.querySelector(".day-head");
+    var chrome = (head ? head.offsetHeight : 42) + 34;   // headers + cal padding/border
+    var avail = sc.clientHeight - chrome;
+    if (avail < 240) return;   // window too small to fit anything useful: keep scrolling
+    var px = Math.max(0.62, Math.min(16 / 15, avail / (DAY_END - DAY_START)));
+    if (Math.abs(px - PX) < 0.01) return;
+    PX = px;
+    applyScale();
+    renderAll();
+  }
+  var fitTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(fitDay, 120);
+  });
+
   // Holds are editable board state, so the skeleton is a render, not a one-time build.
   // Drawn for every week; a skeleton-free week hides them with a class on the grid.
   function renderHolds() {
@@ -1958,7 +1999,7 @@
       var cname = catName(catOf(p));
       // Short blocks have no room for a third line — the color and the
       // tooltip still carry the category there.
-      var roomy = p.mins >= 45;
+      var roomy = p.mins * PX >= 48;
       el.title = p.title + " · " + cname + " — click to edit";
       el.innerHTML =
         "<span class='t'>" + esc(p.title) + "</span>" +
@@ -4344,6 +4385,7 @@
   buildGrid();
   renderCatSelect();
   renderAll();
+  fitDay();
   try { lastSnap = JSON.stringify(state); } catch (e) {}
 
 })();
