@@ -261,6 +261,14 @@
     background: rgba(255,255,255,0.55); color: inherit; opacity: 0; transition: opacity 90ms;
   }
   .blk:hover .rep { opacity: 1; }
+  .blk .dup {
+    position: absolute; top: 2px; right: 56px; width: 16px; height: 16px; line-height: 15px;
+    text-align: center; font-size: 11px; border-radius: 4px; cursor: pointer;
+    background: rgba(255,255,255,0.55); color: inherit; opacity: 0; transition: opacity 90ms;
+  }
+  .blk:hover .dup { opacity: 1; }
+  /* Selected block: the target for Ctrl+C. */
+  .blk.ws.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
   /* Week navigator. */
   .weekbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -1888,16 +1896,22 @@
           (effectiveTeams(p, curWeek) ? " · <b>Teams</b>" : (p.virtual === false ? " · in person" : "")) + "</span>" +
         (roomy ? "<span class='cx' style='color:" + esc(bad ? "var(--danger)" : catPaint(catOf(p)).color) + "'>" +
           esc(cname) + "</span>" : "") +
+        "<button class='dup' type='button' aria-label='Duplicate this event' " +
+          "title='Duplicate — the copy lands in the next free slot'>⎘</button>" +
         "<button class='nt" + (p.notes ? " has" : "") + "' type='button' aria-label='Edit details' " +
           "title='" + (p.notes ? "Edit details (has details)" : "Add details") + "'>✎</button>" +
         "<button class='rep' type='button' aria-label='Repeat this workshop' title='Repeat across days and weeks'>⧉</button>" +
         "<button class='x' type='button' aria-label='Send back to shelf' title='Send back to shelf'>×</button>" +
         "<div class='rz' aria-hidden='true'></div>";
+      if (p.uid === selUid) el.classList.add("sel");
       el.addEventListener("pointerdown", function (e) {
         if (e.target.classList.contains("x") || e.target.classList.contains("rep") ||
-            e.target.classList.contains("nt")) return;
+            e.target.classList.contains("nt") || e.target.classList.contains("dup")) return;
         if (e.target.classList.contains("rz")) { startResize(e, p); return; }
         startDrag(e, p, "grid");
+      });
+      el.querySelector(".dup").addEventListener("click", function () {
+        placeCopy(p, p.day, p.start + p.mins, "Duplicate");
       });
       el.querySelector(".x").addEventListener("click", function () {
         if (!window.confirm("Remove “" + p.title + "” from " + DAYS[p.day] + "?\n\n" +
@@ -2220,34 +2234,129 @@
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
+  // ---------- select, copy, paste, duplicate ----------
+  // Clicking a block selects it; Ctrl+C copies it; Ctrl+V pastes into whatever week
+  // is on screen, so copy-then-switch-weeks moves work across the cycle. The ⎘
+  // button on a block is the one-step version for copying within the same day.
+  var selUid = null;
+  var clipboard = null;
+
+  function selectBlock(uid) {
+    selUid = selUid === uid ? null : uid;
+    [].slice.call(document.querySelectorAll(".blk.sel")).forEach(function (b) { b.classList.remove("sel"); });
+    if (selUid) {
+      var el = document.querySelector(".blk[data-uid='" + selUid + "']");
+      if (el) el.classList.add("sel");
+    }
+  }
+
+  // First start at or after `from` where the block fits on that day without touching
+  // another block or a hold; wraps back to the top of the day before giving up.
+  function findFreeSlot(day, from, mins) {
+    function fits(s) {
+      if (s < DAY_START || s + mins > DAY_END) return false;
+      if (blockedHit(day, s, mins)) return false;
+      return !state.placed.some(function (q) {
+        return q.day === day && overlaps(s, s + mins, q.start, q.start + q.mins);
+      });
+    }
+    var s;
+    for (s = Math.max(DAY_START, from); s + mins <= DAY_END; s += 5) if (fits(s)) return s;
+    for (s = DAY_START; s < from; s += 5) if (fits(s)) return s;
+    return null;
+  }
+
+  function placeCopy(src, day, wantStart, verb) {
+    var slot = findFreeSlot(day, wantStart, src.mins);
+    if (slot === null) {
+      icsSay("No room on " + DAYS[day] + " for “" + src.title + "” — clear some space first.", true);
+      return;
+    }
+    if (!window.confirm(verb + " “" + src.title + "” at " + DAYS[day] + " " +
+        fmt(slot) + " – " + fmt(slot + src.mins) + "?")) return;
+    var copy = {
+      uid: "p" + (state.seq++), refId: src.refId || null, title: src.title,
+      mins: src.mins, cat: src.cat, day: day, start: slot, notes: src.notes
+    };
+    if (src.virtual !== undefined) copy.virtual = src.virtual;
+    state.placed.push(copy);
+    save(); renderAll();
+    selUid = null;
+    selectBlock(copy.uid);
+    icsSay("“" + src.title + "” added at " + fmt(slot) + "." +
+      (state.liveSync ? " The calendar follows in a few seconds." : ""));
+  }
+
+  function copySelected() {
+    var src = state.placed.filter(function (q) { return q.uid === selUid; })[0];
+    if (!src) { icsSay("Click a block first, then Ctrl+C copies it.", true); return; }
+    clipboard = {
+      title: src.title, mins: src.mins, cat: src.cat, day: src.day,
+      start: src.start, notes: src.notes, refId: src.refId
+    };
+    if (src.virtual !== undefined) clipboard.virtual = src.virtual;
+    icsSay("Copied “" + src.title + "”. Ctrl+V pastes it — switch weeks first to put it there.");
+  }
+
+  function pasteClipboard() {
+    if (!clipboard) { icsSay("Nothing copied yet — click a block and press Ctrl+C.", true); return; }
+    placeCopy(clipboard, clipboard.day, clipboard.start, "Paste");
+  }
+
   // ---------- drag ----------
   var drag = null;
 
   function startDrag(e, item, origin) {
     if (e.button !== undefined && e.button !== 0) return;
     e.preventDefault();
-    var ghost = document.createElement("div");
-    ghost.className = "drag-ghost";
-    ghost.textContent = item.title;
-    document.body.appendChild(ghost);
+    // Nothing moves yet: the drag only arms after the pointer travels a few pixels,
+    // so a plain click can never relocate a block. Where the block was grabbed is
+    // remembered so it hangs from that point instead of jumping to center on the
+    // cursor at pickup.
+    var grabMins = 0;
+    if (origin === "grid") {
+      var host = e.target && e.target.closest ? e.target.closest(".blk") : null;
+      if (host) grabMins = (e.clientY - host.getBoundingClientRect().top) / PX;
+    }
     drag = {
-      item: item, origin: origin, ghost: ghost,
-      mins: origin === "grid" ? item.mins : item.mins,
+      item: item, origin: origin, ghost: null, started: false,
+      x0: e.clientX, y0: e.clientY, lastX: e.clientX, lastY: e.clientY,
+      grabMins: grabMins, mins: item.mins, scrollTimer: null,
       preview: null, overDay: -1, dropStart: -1
     };
-    moveGhost(e);
     window.addEventListener("pointermove", onDragMove);
     window.addEventListener("pointerup", onDragUp);
   }
 
-  function moveGhost(e) {
-    drag.ghost.style.left = (e.clientX + 10) + "px";
-    drag.ghost.style.top = (e.clientY + 8) + "px";
+  function onDragMove(e) {
+    drag.lastX = e.clientX; drag.lastY = e.clientY;
+    if (!drag.started) {
+      if (Math.abs(e.clientX - drag.x0) < 5 && Math.abs(e.clientY - drag.y0) < 5) return;
+      drag.started = true;
+      var ghost = document.createElement("div");
+      ghost.className = "drag-ghost";
+      ghost.textContent = drag.item.title;
+      document.body.appendChild(ghost);
+      drag.ghost = ghost;
+      // Holding a block near the top or bottom edge scrolls the day into view,
+      // so it can travel to a time that started offscreen.
+      var sc = document.querySelector(".cal-scroll");
+      if (sc) drag.scrollTimer = setInterval(function () {
+        if (!drag || !drag.started) return;
+        var r = sc.getBoundingClientRect();
+        var v = 0;
+        if (drag.lastY < r.top + 46) v = -Math.ceil((r.top + 46 - drag.lastY) / 4);
+        else if (drag.lastY > r.bottom - 46) v = Math.ceil((drag.lastY - (r.bottom - 46)) / 4);
+        if (v) { sc.scrollTop += v; updateDragAt(drag.lastX, drag.lastY); }
+      }, 16);
+    }
+    updateDragAt(e.clientX, e.clientY);
   }
 
-  function onDragMove(e) {
-    moveGhost(e);
-    var under = document.elementFromPoint(e.clientX, e.clientY);
+  function updateDragAt(x, y) {
+    drag.ghost.style.left = (x + 10) + "px";
+    drag.ghost.style.top = (y + 8) + "px";
+    var under = document.elementFromPoint(x, y);
     var col = under ? under.closest(".day") : null;
     var shelfZone = under ? under.closest(".shelf") : null;
 
@@ -2258,7 +2367,8 @@
     if (col) {
       var day = parseInt(col.getAttribute("data-day"), 10);
       var rect = col.getBoundingClientRect();
-      var min = snap(DAY_START + (e.clientY - rect.top) / PX - drag.mins / 2);
+      var off = drag.origin === "grid" ? drag.grabMins : drag.mins / 2;
+      var min = snap(DAY_START + (y - rect.top) / PX - off);
       min = clampStart(min, drag.mins);
       var blocked = blockedHit(day, min, drag.mins);
       col.classList.add("drop-ok");
@@ -2274,9 +2384,17 @@
   function onDragUp() {
     window.removeEventListener("pointermove", onDragMove);
     window.removeEventListener("pointerup", onDragUp);
+    if (drag.scrollTimer) clearInterval(drag.scrollTimer);
     dayCols.forEach(function (c) { c.classList.remove("drop-ok"); });
     if (drag.preview) drag.preview.remove();
-    drag.ghost.remove();
+    if (drag.ghost) drag.ghost.remove();
+
+    if (!drag.started) {
+      // A click, not a drag: select the block so Ctrl+C and Escape have a target.
+      if (drag.origin === "grid" && drag.item.uid) selectBlock(drag.item.uid);
+      drag = null;
+      return;
+    }
 
     if (drag.overDay >= 0 && drag.blocked) {
       icsSay("Nothing can be scheduled there \u2014 Wednesday is out of cycle after 2:00 PM.", true);
@@ -4121,12 +4239,27 @@
   var undoBtnEl = document.getElementById("undoBtn");
   if (undoBtnEl) undoBtnEl.addEventListener("click", doUndo);
   document.addEventListener("keydown", function (e) {
+    var t = e.target && e.target.tagName;
+    var typing = t === "INPUT" || t === "TEXTAREA" || t === "SELECT";
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
-      var t = e.target && e.target.tagName;
-      if (t === "INPUT" || t === "TEXTAREA" || t === "SELECT") return;   // let fields keep their own undo
+      if (typing) return;   // let fields keep their own undo
       e.preventDefault();
       doUndo();
+      return;
     }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+      // Real text selections keep the browser's own copy.
+      if (typing || (window.getSelection && String(window.getSelection()))) return;
+      copySelected();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+      if (typing) return;
+      e.preventDefault();
+      pasteClipboard();
+      return;
+    }
+    if (e.key === "Escape" && selUid) selectBlock(selUid);   // toggles the selection off
   });
 
   buildGrid();
