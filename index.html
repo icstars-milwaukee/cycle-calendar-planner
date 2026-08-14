@@ -527,6 +527,11 @@
     border: 1px solid var(--accent, var(--line)); border-radius: 3px;
   }
 
+  /* ---- time editor in the details dialog ---- */
+  .time-edit { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+  .time-edit input[type="time"] { margin-bottom: 0; width: auto; flex: none; }
+  .time-edit .time-dur { font-size: 11.5px; color: var(--ink-soft); margin-left: 4px; }
+
   /* ---- floating category picker ---- */
   .catmenu {
     position: fixed; z-index: 90; min-width: 150px; max-width: 220px;
@@ -871,6 +876,14 @@
 
       <div class="rep-label">Category</div>
       <select id="notesCat" aria-label="Category for this event"></select>
+
+      <div class="rep-label">Time</div>
+      <div class="time-edit">
+        <input type="time" id="notesStart" step="900" aria-label="Start time" />
+        <span>–</span>
+        <input type="time" id="notesEnd" step="900" aria-label="End time" />
+        <span class="time-dur" id="notesDur"></span>
+      </div>
 
       <p class="rep-note" id="notesSeries"></p>
       <div class="gate-row">
@@ -1544,6 +1557,9 @@
       catSel.appendChild(o);
     });
     catSel.value = catOf(p);
+    document.getElementById("notesStart").value = minToTime(p.start);
+    document.getElementById("notesEnd").value = minToTime(p.start + p.mins);
+    updNotesDur();
     var series = seriesOf(p);
     var allBtn = document.getElementById("notesAll");
     if (series.length > 1) {
@@ -1566,6 +1582,21 @@
     var newVirtual = picked === "virtual" ? true : picked === "inperson" ? false : undefined;
     var newCat = document.getElementById("notesCat").value;
     if (!catById(newCat)) newCat = catOf(notesTarget);
+
+    // Times: hard rules first, so the dialog stays open for a correction.
+    var ns = timeToMin(document.getElementById("notesStart").value);
+    var ne = timeToMin(document.getElementById("notesEnd").value);
+    if (ns === null || ne === null || ne <= ns || ns < DAY_START || ne > DAY_END) {
+      window.alert("Times must fall between 8:30 AM and 7:15 PM, and end after they start.");
+      return;
+    }
+    var newMins = ne - ns;
+    var timeChanged = ns !== notesTarget.start || newMins !== notesTarget.mins;
+    if (timeChanged && blockedHit(notesTarget.day, ns, newMins)) {
+      window.alert("Nothing can be scheduled there — that time runs into a business hold on " +
+        DAYS[notesTarget.day] + ".");
+      return;
+    }
     var targets = applyToSeries ? seriesOf(notesTarget) : [{ b: notesTarget, wk: curWeek }];
 
     // Are-you-sure: say exactly what is about to change, and for how many events.
@@ -1577,7 +1608,8 @@
     });
     var scope = applyToSeries ? "all " + targets.length + " events in this series" : "this event";
     var what = "Save details" + (formatChanges ? " and change the format" : "") +
-      (catChanges ? " and move to “" + catName(newCat) + "”" : "") + " for " + scope + "?";
+      (catChanges ? " and move to “" + catName(newCat) + "”" : "") +
+      (timeChanged ? " and move to " + fmt(ns) + " – " + fmt(ne) : "") + " for " + scope + "?";
     if (formatChanges) what += "\n\n" + formatChanges + " event" + (formatChanges === 1 ? "" : "s") +
       " will be re-created on the calendar to add or remove the Teams link.";
     if (!window.confirm(what)) return;
@@ -1586,6 +1618,8 @@
       var before = effectiveTeams(t.b, t.wk);
       t.b.notes = text || undefined;
       t.b.cat = newCat;
+      t.b.start = ns;
+      t.b.mins = newMins;
       if (newVirtual === undefined) delete t.b.virtual; else t.b.virtual = newVirtual;
       // Online-meeting fields only apply at creation, so a format flip needs a fresh
       // identity: the reconciler deletes the old event and creates the new one.
@@ -1596,6 +1630,22 @@
     save(); renderAll();
     icsSay("Saved for " + scope + "." + (formatChanges ? " The calendar re-creates " + formatChanges + " event" + (formatChanges === 1 ? "" : "s") + "." : ""));
   }
+
+  // Live duration readout under the time inputs, going red when the range is bad.
+  function updNotesDur() {
+    var el = document.getElementById("notesDur");
+    var s = timeToMin(document.getElementById("notesStart").value);
+    var e = timeToMin(document.getElementById("notesEnd").value);
+    if (s === null || e === null || e <= s || s < DAY_START || e > DAY_END) {
+      el.textContent = "between 8:30 AM and 7:15 PM";
+      el.style.color = "var(--danger)";
+    } else {
+      el.textContent = (e - s) + " min";
+      el.style.color = "";
+    }
+  }
+  document.getElementById("notesStart").addEventListener("input", updNotesDur);
+  document.getElementById("notesEnd").addEventListener("input", updNotesDur);
 
   document.getElementById("notesForm").addEventListener("submit", function (e) {
     e.preventDefault(); saveNotes(false);
