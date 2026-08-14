@@ -1707,9 +1707,25 @@ export class Board {
     const version = current + 1;
     const updated = new Date().toISOString();
 
-    await this.ctx.storage.put({ plan: msg.plan, version, updated });
-
     const stale = typeof msg.base === "number" && msg.base < current;
+
+    // A stale writer is about to overwrite a board it never saw. Whole-board
+    // last-write-wins is acceptable for block moves, but it silently deletes any
+    // category or shelf card someone else created in the gap -- which is how two
+    // people end up looking at different category lists. Deliberate deletes always
+    // act on a fresh base (the delete button operates on the live list), so on a
+    // stale base anything missing is an accident: merge it back in.
+    if (stale) {
+      const cur = (await this.ctx.storage.get("plan")) || null;
+      for (const field of ["cats", "custom"]) {
+        if (!cur || !Array.isArray(cur[field])) continue;
+        if (!Array.isArray(msg.plan[field])) msg.plan[field] = [];
+        const have = new Set(msg.plan[field].map((x) => x && x.id));
+        for (const x of cur[field]) if (x && !have.has(x.id)) msg.plan[field].push(x);
+      }
+    }
+
+    await this.ctx.storage.put({ plan: msg.plan, version, updated });
     ws.send(JSON.stringify({ type: "ack", version, updated, overwrote: stale }));
     this.broadcast({ type: "sync", plan: msg.plan, version, updated, by: msg.by || null }, ws);
 
