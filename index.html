@@ -879,9 +879,11 @@
 
       <div class="rep-label">Time</div>
       <div class="time-edit">
-        <input type="time" id="notesStart" step="900" aria-label="Start time" />
+        <!-- step 60 = to the minute. The Team Week plan runs on times like 9:55 and
+             11:40; a coarser step makes the browser refuse to submit them. -->
+        <input type="time" id="notesStart" step="60" aria-label="Start time" />
         <span>–</span>
-        <input type="time" id="notesEnd" step="900" aria-label="End time" />
+        <input type="time" id="notesEnd" step="60" aria-label="End time" />
         <span class="time-dur" id="notesDur"></span>
       </div>
 
