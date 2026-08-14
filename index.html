@@ -221,15 +221,8 @@
     border-radius: 7px; border: 1px solid var(--line); background: var(--paper);
     color: var(--ink); resize: vertical;
   }
-  .blk .nt {
-    position: absolute; top: 2px; right: 38px; width: 16px; height: 16px; line-height: 15px;
-    text-align: center; font-size: 10px; border-radius: 4px; cursor: pointer;
-    background: rgba(255,255,255,0.55); color: inherit; opacity: 0; transition: opacity 90ms;
-  }
-  .blk:hover .nt { opacity: 1; }
-  .blk .nt.has { opacity: 0.85; }
   /* Non-admins never see delete controls; the server refuses them anyway. */
-  .not-admin .blk .x,
+  .not-admin #notesRemove,
   .not-admin #resetBtn,
   .not-admin .hold-row .del,
   .not-admin #catList .del,
@@ -255,20 +248,11 @@
   .rep-weeks label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
   .rep-note { margin: 12px 0 0 !important; font-size: 12px; color: var(--moss) !important; font-weight: 600; }
   /* The repeat affordance on a placed block. */
-  .blk .rep {
-    position: absolute; top: 2px; right: 20px; width: 16px; height: 16px; line-height: 15px;
-    text-align: center; font-size: 11px; border-radius: 4px; cursor: pointer;
-    background: rgba(255,255,255,0.55); color: inherit; opacity: 0; transition: opacity 90ms;
-  }
-  .blk:hover .rep { opacity: 1; }
-  .blk .dup {
-    position: absolute; top: 2px; right: 56px; width: 16px; height: 16px; line-height: 15px;
-    text-align: center; font-size: 11px; border-radius: 4px; cursor: pointer;
-    background: rgba(255,255,255,0.55); color: inherit; opacity: 0; transition: opacity 90ms;
-  }
-  .blk:hover .dup { opacity: 1; }
   /* Selected block: the target for Ctrl+C. */
   .blk.ws.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+  /* The editor dialog's event actions. */
+  .ev-actions { margin-bottom: 4px; }
+  .ev-actions button.danger { color: var(--danger); border-color: var(--danger); }
   /* Week navigator. */
   .weekbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -640,12 +624,7 @@
   }
   .blk.ws:hover { box-shadow: 0 2px 8px rgba(35,36,31,0.18); }
   .blk.ws.conflict { background: var(--danger-soft); border-left-color: var(--danger); }
-  .blk.ws .x {
-    position: absolute; top: 2px; right: 3px; width: 18px; height: 18px;
-    border: none; background: none; padding: 0; font-size: 13px; line-height: 18px;
-    color: var(--ink-soft); cursor: pointer; border-radius: 3px;
-  }
-  .blk.ws .x:hover { color: var(--danger); background: rgba(0,0,0,0.06); }
+  .rep-hint { font-weight: normal; font-size: 10.5px; color: var(--ink-soft); letter-spacing: 0; }
   .blk.ws .rz {
     position: absolute; left: 0; right: 0; bottom: 0; height: 7px;
     cursor: ns-resize; touch-action: none;
@@ -869,9 +848,13 @@
 
   <div class="gate" id="notesBox" hidden>
     <form class="gate-card" id="notesForm">
-      <h2>Details for <span id="notesWhat"></span></h2>
-      <p>These appear in the calendar event's description, above the planner's own footer.</p>
-      <textarea id="notesText" rows="7" maxlength="4000"
+      <h2>Edit <span id="notesWhat"></span></h2>
+
+      <div class="rep-label">Title</div>
+      <input type="text" id="notesTitle" maxlength="120" aria-label="Event title" />
+
+      <div class="rep-label">Details <span class="rep-hint">— appear in the calendar event's description</span></div>
+      <textarea id="notesText" rows="5" maxlength="4000"
                 placeholder="Agenda, links, prep, facilitator — anything the team should see on the event."></textarea>
 
       <div class="rep-label">Format</div>
@@ -896,6 +879,11 @@
       </div>
 
       <p class="rep-note" id="notesSeries"></p>
+      <div class="gate-row ev-actions">
+        <button type="button" id="notesDup" title="Copy this event into the next free slot on its day">⎘ Duplicate</button>
+        <button type="button" id="notesRep" title="Repeat across days and weeks">⧉ Repeat…</button>
+        <button type="button" id="notesRemove" class="danger" title="Send back to the shelf">× Remove</button>
+      </div>
       <div class="gate-row">
         <button type="submit" class="primary">Save for this event</button>
         <button type="button" id="notesAll" hidden>Save for all <span id="notesAllN"></span></button>
@@ -1550,6 +1538,7 @@
   function openNotes(p) {
     notesTarget = p;
     document.getElementById("notesWhat").textContent = "“" + p.title + "”";
+    document.getElementById("notesTitle").value = p.title;
     document.getElementById("notesText").value = p.notes || "";
     var mode = p.virtual === true ? "virtual" : p.virtual === false ? "inperson" : "default";
     [].slice.call(document.querySelectorAll("input[name=vmode]")).forEach(function (r) {
@@ -1592,6 +1581,12 @@
     var newVirtual = picked === "virtual" ? true : picked === "inperson" ? false : undefined;
     var newCat = document.getElementById("notesCat").value;
     if (!catById(newCat)) newCat = catOf(notesTarget);
+    var newTitle = document.getElementById("notesTitle").value.trim();
+    if (!newTitle) {
+      window.alert("The event needs a title.");
+      document.getElementById("notesTitle").focus();
+      return;
+    }
 
     // Times: hard rules first, so the dialog stays open for a correction.
     var ns = timeToMin(document.getElementById("notesStart").value);
@@ -1616,8 +1611,10 @@
           (newVirtual === undefined ? effectiveTeams({ day: t.b.day }, t.wk) : newVirtual)) formatChanges++;
       if (catOf(t.b) !== newCat) catChanges++;
     });
+    var titleChanged = newTitle !== notesTarget.title;
     var scope = applyToSeries ? "all " + targets.length + " events in this series" : "this event";
-    var what = "Save details" + (formatChanges ? " and change the format" : "") +
+    var what = "Save details" + (titleChanged ? " and rename to “" + newTitle + "”" : "") +
+      (formatChanges ? " and change the format" : "") +
       (catChanges ? " and move to “" + catName(newCat) + "”" : "") +
       (timeChanged ? " and move to " + fmt(ns) + " – " + fmt(ne) : "") + " for " + scope + "?";
     if (formatChanges) what += "\n\n" + formatChanges + " event" + (formatChanges === 1 ? "" : "s") +
@@ -1628,6 +1625,7 @@
       var before = effectiveTeams(t.b, t.wk);
       t.b.notes = text || undefined;
       t.b.cat = newCat;
+      t.b.title = newTitle;
       t.b.start = ns;
       t.b.mins = newMins;
       if (newVirtual === undefined) delete t.b.virtual; else t.b.virtual = newVirtual;
@@ -1663,6 +1661,28 @@
   document.getElementById("notesAll").addEventListener("click", function () { saveNotes(true); });
   document.getElementById("notesCancel").addEventListener("click", function () {
     notesBox.hidden = true; notesTarget = null;
+  });
+  document.getElementById("notesDup").addEventListener("click", function () {
+    var p = notesTarget;
+    if (!p) return;
+    notesBox.hidden = true; notesTarget = null;
+    placeCopy(p, p.day, p.start + p.mins, "Duplicate");
+  });
+  document.getElementById("notesRep").addEventListener("click", function () {
+    var p = notesTarget;
+    if (!p) return;
+    notesBox.hidden = true; notesTarget = null;
+    openRepeat(p);
+  });
+  document.getElementById("notesRemove").addEventListener("click", function () {
+    var p = notesTarget;
+    if (!p) return;
+    if (!window.confirm("Remove “" + p.title + "” from " + DAYS[p.day] + "?\n\n" +
+        "It goes back to the shelf, and its calendar event is removed on the next sync.")) return;
+    notesBox.hidden = true; notesTarget = null;
+    ensureShelfCard(p);
+    setPlaced(state.placed.filter(function (q) { return q.uid !== p.uid; }));
+    save(); renderAll();
   });
 
   // ---------- repeating a workshop ----------
@@ -1889,39 +1909,22 @@
       // Short blocks have no room for a third line — the color and the
       // tooltip still carry the category there.
       var roomy = p.mins >= 45;
-      el.title = p.title + " · " + cname;
+      el.title = p.title + " · " + cname + " — click to edit";
       el.innerHTML =
         "<span class='t'>" + esc(p.title) + "</span>" +
         "<span class='d'>" + fmt(p.start) + " – " + fmt(p.start + p.mins) + " · " + p.mins + "m" +
           (effectiveTeams(p, curWeek) ? " · <b>Teams</b>" : (p.virtual === false ? " · in person" : "")) + "</span>" +
         (roomy ? "<span class='cx' style='color:" + esc(bad ? "var(--danger)" : catPaint(catOf(p)).color) + "'>" +
           esc(cname) + "</span>" : "") +
-        "<button class='dup' type='button' aria-label='Duplicate this event' " +
-          "title='Duplicate — the copy lands in the next free slot'>⎘</button>" +
-        "<button class='nt" + (p.notes ? " has" : "") + "' type='button' aria-label='Edit details' " +
-          "title='" + (p.notes ? "Edit details (has details)" : "Add details") + "'>✎</button>" +
-        "<button class='rep' type='button' aria-label='Repeat this workshop' title='Repeat across days and weeks'>⧉</button>" +
-        "<button class='x' type='button' aria-label='Send back to shelf' title='Send back to shelf'>×</button>" +
         "<div class='rz' aria-hidden='true'></div>";
+      // No tiny hover buttons: clicking the block opens the editor dialog, which
+      // holds everything -- title, time, category, format, details, duplicate,
+      // repeat, remove. The resize handle and drag remain direct.
       if (p.uid === selUid) el.classList.add("sel");
       el.addEventListener("pointerdown", function (e) {
-        if (e.target.classList.contains("x") || e.target.classList.contains("rep") ||
-            e.target.classList.contains("nt") || e.target.classList.contains("dup")) return;
         if (e.target.classList.contains("rz")) { startResize(e, p); return; }
         startDrag(e, p, "grid");
       });
-      el.querySelector(".dup").addEventListener("click", function () {
-        placeCopy(p, p.day, p.start + p.mins, "Duplicate");
-      });
-      el.querySelector(".x").addEventListener("click", function () {
-        if (!window.confirm("Remove “" + p.title + "” from " + DAYS[p.day] + "?\n\n" +
-            "It goes back to the shelf, and its calendar event is removed on the next sync.")) return;
-        ensureShelfCard(p);
-        setPlaced(state.placed.filter(function (q) { return q.uid !== p.uid; }));
-        save(); renderAll();
-      });
-      el.querySelector(".rep").addEventListener("click", function () { openRepeat(p); });
-      el.querySelector(".nt").addEventListener("click", function () { openNotes(p); });
       // Clicking the category name on a block opens the picker for just that block --
       // the fix for every workshop being stuck in whatever the add form stamped on it.
       var cx = el.querySelector(".cx");
@@ -2390,8 +2393,11 @@
     if (drag.ghost) drag.ghost.remove();
 
     if (!drag.started) {
-      // A click, not a drag: select the block so Ctrl+C and Escape have a target.
-      if (drag.origin === "grid" && drag.item.uid) selectBlock(drag.item.uid);
+      // A click, not a drag: select the block (Ctrl+C target) and open the editor.
+      if (drag.origin === "grid" && drag.item.uid) {
+        selectBlock(drag.item.uid);
+        openNotes(drag.item);
+      }
       drag = null;
       return;
     }
@@ -4259,7 +4265,11 @@
       pasteClipboard();
       return;
     }
-    if (e.key === "Escape" && selUid) selectBlock(selUid);   // toggles the selection off
+    if (e.key === "Escape") {
+      var nb = document.getElementById("notesBox");
+      if (nb && !nb.hidden) { nb.hidden = true; notesTarget = null; return; }
+      if (selUid) selectBlock(selUid);   // toggles the selection off
+    }
   });
 
   buildGrid();
