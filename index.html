@@ -1493,38 +1493,55 @@
     return currList().filter(function (e) { return e.code === k; })[0] || null;
   }
 
+  // Durations survive the PDF's letter-spacing, which can split "min" into "m in".
+  var MINS_RE = /\(\s*(\d+)\s*m\s*in[^)]*\)?/i;
+  var BODY_START_RE = /^(●|•|-|standards|outcome|outcomes|artifact|artifacts|transfer strategy|rationale|enhancements)/i;
+
   // Returns entries found; does not touch state, so the caller can report and confirm.
   function parseCurriculum(text) {
     var lines = String(text || "").replace(/\r/g, "").split("\n");
     var found = [], cur = null;
     var weekCtx = "";
-    lines.forEach(function (raw) {
-      var line = raw.replace(/\s+$/, "");
-      var t = line.trim();
-      if (!t) { if (cur) cur.body.push(""); return; }
+    for (var i = 0; i < lines.length; i++) {
+      var t = lines[i].trim();
+      if (!t) { if (cur) cur.body.push(""); continue; }
       // "Week 2 | Foundations of Wellness Awareness" — context for the entries under it.
       var wk = /^week\s+(\d+)\s*\|\s*(.+)$/i.exec(t);
-      if (wk) { weekCtx = "Week " + wk[1] + " · " + wk[2].trim(); return; }
+      if (wk) { weekCtx = "Week " + wk[1] + " · " + wk[2].trim(); continue; }
       var m = CODE_RE.exec(t);
-      // A session line has to look like a heading, not a sentence that happens to
-      // start with a code -- so require a duration, or a short title.
-      if (m && (/\(\s*\d+\s*min/i.test(t) || m[2].length <= 90)) {
+      // A heading either says "Session" or carries a duration. Without that test a
+      // sentence like "FULL 8-minute rehearsal and..." reads as code FULL8 and steals
+      // the previous session's body.
+      if (m && (/^session\b/i.test(t) || MINS_RE.test(t))) {
         if (cur) found.push(cur);
+        // A long session title wraps, carrying its "(60 min)" onto the next line.
+        // Join it back before reading the title and duration.
+        var head = t;
+        if (!/\)\s*$/.test(head)) {
+          var nxt = (lines[i + 1] || "").trim();
+          if (nxt && nxt.length < 80 && !BODY_START_RE.test(nxt) &&
+              !CODE_RE.test(nxt) && !/^week\s+\d+\s*\|/i.test(nxt) &&
+              (MINS_RE.test(nxt) || /\($/.test(head) || /\(\s*\d+\s*$/.test(head))) {
+            head = head + " " + nxt;
+            i++;
+            m = CODE_RE.exec(head) || m;
+          }
+        }
         var mins = null;
-        var mm = /\(\s*(\d+)\s*min[^)]*\)/i.exec(t);
+        var mm = MINS_RE.exec(head);
         var title = m[2];
-        if (mm) { mins = parseInt(mm[1], 10); title = title.replace(/\(\s*\d+\s*min[^)]*\)/i, ""); }
+        if (mm) { mins = parseInt(mm[1], 10); title = title.replace(MINS_RE, ""); }
         cur = {
           code: m[1].replace(/\s+/g, "").toUpperCase(),
-          title: title.replace(/[\s–—:-]+$/, "").trim(),
+          title: title.replace(/[\s–—:(-]+$/, "").trim(),
           mins: mins,
           week: weekCtx,
           body: [],
         };
-        return;
+        continue;
       }
       if (cur) cur.body.push(t);
-    });
+    }
     if (cur) found.push(cur);
     return found.map(function (e) {
       return {
