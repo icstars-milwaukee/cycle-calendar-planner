@@ -185,6 +185,24 @@ function hhmm(minutesOfDay) {
   return pad2(Math.floor(m / 60)) + ":" + pad2(m % 60) + ":00";
 }
 
+// Facilitators for a block: its own assignment, or the shelf card's if it has none.
+// Normalised to lowercase addresses, deduped, capped -- these become real invitations.
+function assignedTo(p, plan) {
+  let list = Array.isArray(p.who) ? p.who : null;
+  if (!list || !list.length) {
+    const card = p.refId ? (plan.custom || []).find((c) => c.id === p.refId) : null;
+    list = card && Array.isArray(card.who) ? card.who : [];
+  }
+  const out = [];
+  for (const raw of list) {
+    const e = String(raw || "").trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) continue;
+    if (out.indexOf(e) < 0) out.push(e);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
 function toEvents(plan, room) {
   if (!plan) return { ok: true, weekOf: null, events: [] };
   if (!plan.weekOf) {
@@ -247,6 +265,9 @@ function toEvents(plan, room) {
         teams: p.virtual === true ? true : p.virtual === false ? false :
           (w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0 && !skipHolds.has(w + 1)),
         notes: typeof p.notes === "string" ? p.notes.slice(0, 4000) : "",
+        // Facilitators become real attendees, which is what puts the session on their
+        // own calendar. Inherited from the shelf card when the block carries none.
+        who: assignedTo(p, plan),
       });
     }
   }
@@ -394,6 +415,13 @@ function graphBody(ev) {
     // Graph does not expose for group mailboxes -- so someone defines each name's
     // color once in Outlook, and every event wearing that name follows it.
     categories: ev.category ? [ev.category] : [],
+    // Assigned facilitators are invited, which is what puts the session on their own
+    // calendar. Graph sends the invitation from the group mailbox on create, and on
+    // update to anyone newly added.
+    attendees: (ev.who || []).map((a) => ({
+      emailAddress: { address: a, name: a.split("@")[0] },
+      type: "required",
+    })),
     // Graph uses transactionId to make event creation idempotent: re-POSTing the same
     // one does not create a second event. Without it, any run that creates events and
     // then dies before reporting back duplicates all of them on the next attempt --
@@ -408,9 +436,14 @@ function graphBody(ev) {
       content: (ev.notes ? ev.notes + "\n\n----\n" : "") +
         "Cycle Calendar Planner" + (ev.category ? " - " + ev.category : "") +
         (ev.week ? "\nWeek " + ev.week + " of " + CYCLE_WEEKS : "") +
+        ((ev.who || []).length ? "\nFacilitator: " + ev.who.join(", ") : "") +
         "\nDo not edit here; edit the planner and it will be overwritten on the next sync." +
         "\nref: " + ev.uid +
-        "\nnh: " + notesHash(ev.notes || ""),
+        "\nnh: " + notesHash(ev.notes || "") +
+        // Attendee fingerprint. The flow's calendarView listing does not return
+        // attendees (the same gap that hides category drift), so reassignment is
+        // detected through the body, which it does return.
+        "\nas: " + notesHash((ev.who || []).join(",")),
     },
   };
 }
@@ -572,7 +605,12 @@ function reconcile(publishedPlan, room, existingRaw) {
     const bodyText = String((keep.body && keep.body.content) || keep.bodyPreview || "");
     const foundNh = (/nh:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || notesHash("");
     const sameNotes = foundNh === notesHash(ev.notes || "");
-    if (!sameSubject || !sameStart || !sameEnd || !sameCat || !sameNotes) {
+    // Reassignment: same fingerprint trick. An event stamped before facilitators
+    // existed carries no as: line and reads as unassigned, so it only updates once
+    // someone actually assigns it.
+    const foundAs = (/as:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || notesHash("");
+    const sameWho = foundAs === notesHash((ev.who || []).join(","));
+    if (!sameSubject || !sameStart || !sameEnd || !sameCat || !sameNotes || !sameWho) {
       // Online-meeting fields are creation-only in Graph; patching them onto an
       // existing event can fail the whole update, so they stay out of PATCH bodies.
       const body = graphBody(ev);

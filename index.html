@@ -250,6 +250,11 @@
   /* The repeat affordance on a placed block. */
   /* Selected block: the target for Ctrl+C. */
   .blk.ws.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+  /* Assigned facilitator, trailing the category name on a block. */
+  .blk.ws .cx .fac {
+    font-style: normal; opacity: 0.85; margin-left: 5px; padding-left: 5px;
+    border-left: 1px solid currentColor;
+  }
   /* Presence: who's in the room, and their live drag ghosts on the grid. */
   .who-row { display: inline-flex; gap: 4px; align-items: center; }
   .who-chip {
@@ -409,6 +414,10 @@
   .stat span { font-size: 10.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-soft); }
   .stat.warn b { color: var(--danger); }
   .stat .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+  .stat-head {
+    flex-basis: 100%; font-size: 10.5px; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--ink-soft); font-weight: 700; margin: 4px 0 -2px;
+  }
 
   /* ---- business holds ---- */
   .holds {
@@ -903,6 +912,11 @@
       <div class="rep-label">Category</div>
       <select id="notesCat" aria-label="Category for this event"></select>
 
+      <div class="rep-label">Facilitator <span class="rep-hint">— invited, so it lands on their own calendar</span></div>
+      <input type="text" id="notesWho" list="whoList" autocomplete="off" maxlength="200"
+             placeholder="name@icstars.org — separate two with a comma" aria-label="Assigned facilitator" />
+      <datalist id="whoList"></datalist>
+
       <div class="rep-label">Time</div>
       <div class="time-edit">
         <!-- step 60 = to the minute. The Team Week plan runs on times like 9:55 and
@@ -1348,6 +1362,52 @@
     return "k" + (state.seq++) + "-" + Math.random().toString(36).slice(2, 6);
   }
 
+  // ---------- facilitators ----------
+  // A block's facilitators, falling back to its shelf card's -- the same inheritance
+  // categories use, so assigning a workshop once carries to future placements. These
+  // become calendar invitations, which is what puts the session on their own calendar.
+  function whoOf(item) {
+    if (Array.isArray(item.who) && item.who.length) return item.who;
+    var src = item.refId ? findItem(item.refId) : null;
+    if (src && Array.isArray(src.who) && src.who.length) return src.who;
+    return [];
+  }
+  function parseWho(text) {
+    var out = [], bad = [];
+    String(text || "").split(/[,;]+/).forEach(function (raw) {
+      var e = raw.trim().toLowerCase();
+      if (!e) return;
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { bad.push(raw.trim()); return; }
+      if (out.indexOf(e) < 0) out.push(e);
+    });
+    return { list: out, bad: bad };
+  }
+  function whoLabel(list) {
+    if (!list || !list.length) return "";
+    var names = list.map(function (e) { return e.split("@")[0]; });
+    return names.length > 2 ? names[0] + " +" + (names.length - 1) : names.join(", ");
+  }
+  // Everyone already assigned anywhere on the board, for the picker's suggestions.
+  function knownFacilitators() {
+    var seen = {};
+    (state.weeks || [state.placed]).forEach(function (wk) {
+      (wk || []).forEach(function (p) { (p.who || []).forEach(function (e) { seen[e] = 1; }); });
+    });
+    (state.custom || []).forEach(function (c) { (c.who || []).forEach(function (e) { seen[e] = 1; }); });
+    (state.facilitators || []).forEach(function (e) { seen[e] = 1; });
+    return Object.keys(seen).sort();
+  }
+  function refreshWhoList() {
+    var dl = document.getElementById("whoList");
+    if (!dl) return;
+    dl.innerHTML = "";
+    knownFacilitators().forEach(function (e) {
+      var o = document.createElement("option");
+      o.value = e;
+      dl.appendChild(o);
+    });
+  }
+
   // ---------- business holds editor ----------
   // Holds are the cycle's own now. Every change confirms, states that the whole
   // calendar follows, then syncs like any other board edit.
@@ -1591,6 +1651,8 @@
       catSel.appendChild(o);
     });
     catSel.value = catOf(p);
+    document.getElementById("notesWho").value = (whoOf(p) || []).join(", ");
+    refreshWhoList();
     document.getElementById("notesStart").value = minToTime(p.start);
     document.getElementById("notesEnd").value = minToTime(p.start + p.mins);
     updNotesDur();
@@ -1645,6 +1707,15 @@
       document.getElementById("notesTitle").focus();
       return;
     }
+    var whoEl = document.getElementById("notesWho");
+    var parsedWho = parseWho(whoEl.value);
+    if (parsedWho.bad.length) {
+      window.alert("That doesn't look like an email address: " + parsedWho.bad.join(", ") +
+        "\n\nUse a full address like name@icstars.org, and a comma between two facilitators.");
+      whoEl.focus();
+      return;
+    }
+    var newWho = parsedWho.list;
 
     // Times: hard rules first, so the dialog stays open for a correction.
     var ns = timeToMin(document.getElementById("notesStart").value);
@@ -1684,13 +1755,25 @@
       if (catOf(t.b) !== newCat) catChanges++;
     });
     var titleChanged = newTitle !== notesTarget.title;
+    var whoBefore = whoOf(notesTarget);
+    var whoChanged = newWho.join(",") !== whoBefore.join(",");
     var scope = applyToSeries ? "all " + targets.length + " events in this series" : "this event";
     var what = "Save details" + (titleChanged ? " and rename to “" + newTitle + "”" : "") +
       (formatChanges ? " and change the format" : "") +
       (catChanges ? " and move to “" + catName(newCat) + "”" : "") +
-      (timeChanged ? " and move to " + fmt(ns) + " – " + fmt(ne) : "") + " for " + scope + "?";
+      (timeChanged ? " and move to " + fmt(ns) + " – " + fmt(ne) : "") +
+      (whoChanged ? (newWho.length ? " and assign " + newWho.join(", ") : " and clear the facilitator") : "") +
+      " for " + scope + "?";
     if (formatChanges) what += "\n\n" + formatChanges + " event" + (formatChanges === 1 ? "" : "s") +
       " will be re-created on the calendar to add or remove the Teams link.";
+    // Assignment sends a real meeting invitation, so say so before it happens.
+    if (whoChanged && newWho.length) {
+      what += "\n\n" + newWho.join(" and ") + (newWho.length === 1 ? " is" : " are") +
+        " invited to " + (applyToSeries ? targets.length + " events" : "this event") +
+        ", which puts " + (applyToSeries ? "them" : "it") + " on their own calendar.";
+    } else if (whoChanged && whoBefore.length) {
+      what += "\n\n" + whoBefore.join(" and ") + " will be removed from the invitation.";
+    }
     if (!window.confirm(what)) return;
 
     targets.forEach(function (t) {
@@ -1700,15 +1783,25 @@
       t.b.title = newTitle;
       t.b.start = ns;
       t.b.mins = newMins;
+      if (newWho.length) t.b.who = newWho.slice(); else delete t.b.who;
       if (newVirtual === undefined) delete t.b.virtual; else t.b.virtual = newVirtual;
       // Online-meeting fields only apply at creation, so a format flip needs a fresh
       // identity: the reconciler deletes the old event and creates the new one.
       if (effectiveTeams(t.b, t.wk) !== before) t.b.uid = "p" + (state.seq++);
     });
+    // Remember the roster so a facilitator stays suggestable after being unassigned.
+    if (newWho.length) {
+      if (!Array.isArray(state.facilitators)) state.facilitators = [];
+      newWho.forEach(function (e) {
+        if (state.facilitators.indexOf(e) < 0) state.facilitators.push(e);
+      });
+    }
     notesBox.hidden = true;
     notesTarget = null;
     save(); renderAll();
-    icsSay("Saved for " + scope + "." + (formatChanges ? " The calendar re-creates " + formatChanges + " event" + (formatChanges === 1 ? "" : "s") + "." : ""));
+    icsSay("Saved for " + scope + "." +
+      (whoChanged && newWho.length ? " " + whoLabel(newWho) + " gets the invite on the next publish." : "") +
+      (formatChanges ? " The calendar re-creates " + formatChanges + " event" + (formatChanges === 1 ? "" : "s") + "." : ""));
   }
 
   // Live duration readout under the time inputs, going red when the range is bad.
@@ -1862,7 +1955,8 @@
           uid: "p" + (state.seq++),
           refId: repeatTarget.refId, title: repeatTarget.title, mins: repeatTarget.mins,
           cat: repeatTarget.cat, day: d, start: repeatTarget.start,
-          notes: repeatTarget.notes
+          notes: repeatTarget.notes,
+          who: repeatTarget.who ? repeatTarget.who.slice() : undefined
         });
         made++;
       });
@@ -2051,13 +2145,15 @@
       // Short blocks have no room for a third line — the color and the
       // tooltip still carry the category there.
       var roomy = p.mins * PX >= 48;
-      el.title = p.title + " · " + cname + " — click to edit";
+      var pWho = whoOf(p);
+      el.title = p.title + " · " + cname +
+        (pWho.length ? " · " + pWho.join(", ") : "") + " — click to edit";
       el.innerHTML =
         "<span class='t'>" + esc(p.title) + "</span>" +
         "<span class='d'>" + fmt(p.start) + " – " + fmt(p.start + p.mins) + " · " + p.mins + "m" +
           (effectiveTeams(p, curWeek) ? " · <b>Teams</b>" : (p.virtual === false ? " · in person" : "")) + "</span>" +
         (roomy ? "<span class='cx' style='color:" + esc(bad ? "var(--danger)" : catPaint(catOf(p)).color) + "'>" +
-          esc(cname) + "</span>" : "") +
+          esc(cname) + (pWho.length ? "<i class='fac'>" + esc(whoLabel(pWho)) + "</i>" : "") + "</span>" : "") +
         "<div class='rz' aria-hidden='true'></div>";
       // No tiny hover buttons: clicking the block opens the editor dialog, which
       // holds everything -- title, time, category, format, details, duplicate,
@@ -2102,6 +2198,9 @@
     var id = "w" + (state.seq++);
     var card = { id: id, title: p.title, mins: p.mins, cat: catOf(p) };
     if (p.notes) card.notes = p.notes;
+    // The card keeps the assignment, so replacing the block re-invites the same person.
+    var cw = whoOf(p);
+    if (cw.length) card.who = cw.slice();
     state.custom.push(card);
     p.refId = id;
     return id;
@@ -2184,6 +2283,27 @@
       html += "<div class='stat'><b>" + hrs(perCat[c.id] || 0) + "</b>" +
         "<span><i class='dot' style='background:" + esc(c.color) + "'></i>" + esc(c.name) + "</span></div>";
     });
+    // Facilitator load across the whole cycle, plus what is still unassigned --
+    // the question "who is carrying what, and what has nobody" in one place.
+    var perWho = {}, unassigned = 0;
+    (state.weeks || [state.placed]).forEach(function (wk) {
+      (wk || []).forEach(function (p) {
+        var list = whoOf(p);
+        if (!list.length) { unassigned += p.mins; return; }
+        list.forEach(function (e) { perWho[e] = (perWho[e] || 0) + p.mins; });
+      });
+    });
+    var names = Object.keys(perWho).sort(function (a, b) { return perWho[b] - perWho[a]; });
+    if (names.length || unassigned) {
+      html += "<div class='stat-head'>Facilitators · whole cycle</div>";
+      names.forEach(function (e) {
+        html += "<div class='stat'><b>" + hrs(perWho[e]) + "</b><span title='" + esc(e) + "'>" +
+          esc(e.split("@")[0]) + "</span></div>";
+      });
+      if (unassigned) {
+        html += "<div class='stat warn'><b>" + hrs(unassigned) + "</b><span>No facilitator yet</span></div>";
+      }
+    }
     statsEl.innerHTML = html;
     for (var d = 0; d < 5; d++) {
       var span = cal.querySelector("[data-load='" + d + "']");
@@ -2511,7 +2631,8 @@
         fmt(slot) + " – " + fmt(slot + src.mins) + "?")) return;
     var copy = {
       uid: "p" + (state.seq++), refId: src.refId || null, title: src.title,
-      mins: src.mins, cat: src.cat, day: day, start: slot, notes: src.notes
+      mins: src.mins, cat: src.cat, day: day, start: slot, notes: src.notes,
+      who: src.who && src.who.length ? src.who.slice() : undefined
     };
     if (src.virtual !== undefined) copy.virtual = src.virtual;
     state.placed.push(copy);
@@ -2527,7 +2648,8 @@
     if (!src) { icsSay("Click a block first, then Ctrl+C copies it.", true); return; }
     clipboard = {
       title: src.title, mins: src.mins, cat: src.cat, day: src.day,
-      start: src.start, notes: src.notes, refId: src.refId
+      start: src.start, notes: src.notes, refId: src.refId,
+      who: src.who && src.who.length ? src.who.slice() : undefined
     };
     if (src.virtual !== undefined) clipboard.virtual = src.virtual;
     icsSay("Copied “" + src.title + "”. Ctrl+V pastes it — switch weeks first to put it there.");
@@ -2662,7 +2784,8 @@
           start: drag.dropStart,
           // A card made from a removed block keeps its details; placing it again
           // restores them, so a shelf round-trip loses nothing.
-          notes: drag.item.notes
+          notes: drag.item.notes,
+          who: drag.item.who && drag.item.who.length ? drag.item.who.slice() : undefined
         });
       } else {
         drag.item.day = drag.overDay;
@@ -3065,7 +3188,8 @@
           uid: "p" + (state.seq++),
           refId: p.refId, title: p.title, mins: p.mins,
           cat: p.cat, day: p.day, start: p.start,
-          notes: p.notes
+          notes: p.notes,
+          who: p.who ? p.who.slice() : undefined
         };
       });
     });
