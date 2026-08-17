@@ -250,6 +250,32 @@
   /* The repeat affordance on a placed block. */
   /* Selected block: the target for Ctrl+C. */
   .blk.ws.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+  /* ---- curriculum library ---- */
+  .currbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .currbar input { flex: 1 1 auto; margin-bottom: 0; }
+  .currcount { font-size: 10.5px; color: var(--ink-soft); white-space: nowrap; }
+  .currlist { max-height: 260px; overflow-y: auto; margin-bottom: 12px; }
+  .currrow {
+    display: flex; align-items: baseline; gap: 8px; padding: 6px 7px; border-radius: 6px;
+    border: 1px solid var(--line); margin-bottom: 5px; font-size: 12px; background: var(--surface);
+  }
+  .currrow .cc { font-weight: 700; font-variant-numeric: tabular-nums; flex: none; }
+  .currrow .ct2 { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .currrow .cmin { font-size: 10.5px; color: var(--ink-soft); flex: none; }
+  .currrow .del {
+    flex: none; border: none; background: none; padding: 0 2px; font-size: 14px; line-height: 1;
+    color: var(--ink-soft); cursor: pointer;
+  }
+  .currrow .del:hover { color: var(--danger); }
+  .curr-empty { font-size: 12px; color: var(--ink-soft); margin: 0 0 12px; }
+  .curr-pick { display: flex; gap: 6px; margin-bottom: 6px; }
+  .curr-pick select { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+  .curr-pick button { flex: none; }
+  /* The mapped code, shown on a block. */
+  .blk.ws .code {
+    position: absolute; right: 4px; bottom: 2px; font-size: 9.5px; font-weight: 700;
+    opacity: 0.75; letter-spacing: 0.03em; pointer-events: none;
+  }
   /* Assigned facilitator, trailing the category name on a block. */
   .blk.ws .cx .fac {
     font-style: normal; opacity: 0.85; margin-left: 5px; padding-left: 5px;
@@ -897,6 +923,13 @@
       <div class="rep-label">Title</div>
       <input type="text" id="notesTitle" maxlength="120" aria-label="Event title" />
 
+      <div class="rep-label">Curriculum</div>
+      <div class="curr-pick">
+        <select id="notesCode" aria-label="Curriculum code"></select>
+        <button type="button" id="notesPull" title="Pull this code's details into the box below">Pull details</button>
+      </div>
+      <p class="rep-note" id="notesCodeInfo"></p>
+
       <div class="rep-label">Details <span class="rep-hint">— appear in the calendar event's description</span></div>
       <textarea id="notesText" rows="5" maxlength="4000"
                 placeholder="Agenda, links, prep, facilitator — anything the team should see on the event."></textarea>
@@ -969,6 +1002,7 @@
       <div class="side-tabs" role="tablist">
         <button type="button" data-tab="tabShelf" class="on">Workshops</button>
         <button type="button" data-tab="tabCats">Categories</button>
+        <button type="button" data-tab="tabCurr">Curriculum</button>
         <button type="button" data-tab="tabCycle">Cycle</button>
         <button type="button" data-tab="tabLog">History</button>
       </div>
@@ -1005,6 +1039,25 @@
             <p class="addform-note">Every category gets its own color, legend entry, and hours total.</p>
           </form>
         </div>
+      </div>
+
+      <div class="spanel" id="tabCurr">
+        <p class="hint">The code library. Map a workshop to its code in the event editor and its
+          details pull in, ready to edit before you publish.</p>
+        <div class="currbar">
+          <input id="currFind" type="search" placeholder="Find a code or title" aria-label="Search curriculum" />
+          <span id="currCount" class="currcount"></span>
+        </div>
+        <div id="currList" class="currlist"></div>
+        <form class="addform" id="currForm">
+          <label for="currPaste">Add from a curriculum PDF</label>
+          <p class="addform-note" style="margin:0 0 7px">Open the PDF, select the pages, copy, and paste
+            here. Sessions like <b>W2A – Why Wellness Matters (60 min)</b> become codes; everything under
+            each one becomes its details.</p>
+          <textarea id="currPaste" rows="5" placeholder="Paste curriculum text here…"></textarea>
+          <button type="submit">Read codes from this text</button>
+          <p class="addform-note" id="currMsg"></p>
+        </form>
       </div>
 
       <div class="spanel" id="tabCycle">
@@ -1408,6 +1461,115 @@
     });
   }
 
+  // ---------- curriculum library ----------
+  // Codes come from the curriculum PDFs: a session line like
+  //   "Session W2A – Why Wellness Matters: Introduction to the 7 Dimensions (60 min)"
+  // opens an entry, and every line under it until the next session line is its
+  // details. Mapping a workshop to a code pulls those details into the event, where
+  // they stay editable -- nothing reaches the calendar until someone publishes.
+  var CODE_RE = /^(?:session\s+)?([A-Z]{1,4}\s?\d{1,2}[A-Z]?(?:\.\d+)?)\s*(?:[–—:-]\s*)(.+)$/i;
+
+  function currList() {
+    if (!Array.isArray(state.curriculum)) state.curriculum = [];
+    return state.curriculum;
+  }
+  function currByCode(code) {
+    var k = String(code || "").trim().toUpperCase();
+    return currList().filter(function (e) { return e.code === k; })[0] || null;
+  }
+
+  // Returns entries found; does not touch state, so the caller can report and confirm.
+  function parseCurriculum(text) {
+    var lines = String(text || "").replace(/\r/g, "").split("\n");
+    var found = [], cur = null;
+    var weekCtx = "";
+    lines.forEach(function (raw) {
+      var line = raw.replace(/\s+$/, "");
+      var t = line.trim();
+      if (!t) { if (cur) cur.body.push(""); return; }
+      // "Week 2 | Foundations of Wellness Awareness" — context for the entries under it.
+      var wk = /^week\s+(\d+)\s*\|\s*(.+)$/i.exec(t);
+      if (wk) { weekCtx = "Week " + wk[1] + " · " + wk[2].trim(); return; }
+      var m = CODE_RE.exec(t);
+      // A session line has to look like a heading, not a sentence that happens to
+      // start with a code -- so require a duration, or a short title.
+      if (m && (/\(\s*\d+\s*min/i.test(t) || m[2].length <= 90)) {
+        if (cur) found.push(cur);
+        var mins = null;
+        var mm = /\(\s*(\d+)\s*min[^)]*\)/i.exec(t);
+        var title = m[2];
+        if (mm) { mins = parseInt(mm[1], 10); title = title.replace(/\(\s*\d+\s*min[^)]*\)/i, ""); }
+        cur = {
+          code: m[1].replace(/\s+/g, "").toUpperCase(),
+          title: title.replace(/[\s–—:-]+$/, "").trim(),
+          mins: mins,
+          week: weekCtx,
+          body: [],
+        };
+        return;
+      }
+      if (cur) cur.body.push(t);
+    });
+    if (cur) found.push(cur);
+    return found.map(function (e) {
+      return {
+        code: e.code,
+        title: e.title,
+        mins: e.mins,
+        detail: (e.week ? e.week + "\n\n" : "") + e.body.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+      };
+    }).filter(function (e) { return e.code && e.title; });
+  }
+
+  function renderCurr() {
+    var list = document.getElementById("currList");
+    if (!list) return;
+    var all = currList();
+    var q = (document.getElementById("currFind").value || "").trim().toLowerCase();
+    var shown = q ? all.filter(function (e) {
+      return (e.code + " " + e.title).toLowerCase().indexOf(q) >= 0;
+    }) : all;
+    document.getElementById("currCount").textContent =
+      all.length ? (q ? shown.length + " of " + all.length : all.length + " code" + (all.length === 1 ? "" : "s")) : "";
+    list.innerHTML = "";
+    if (!all.length) {
+      list.innerHTML = "<p class='curr-empty'>No codes yet. Paste a curriculum PDF's text below to build the library.</p>";
+      return;
+    }
+    shown.slice(0, 400).forEach(function (e) {
+      var row = document.createElement("div");
+      row.className = "currrow";
+      row.innerHTML = "<span class='cc'>" + esc(e.code) + "</span>" +
+        "<span class='ct2' title='" + esc(e.title) + "'>" + esc(e.title) + "</span>" +
+        (e.mins ? "<span class='cmin'>" + e.mins + "m</span>" : "");
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "del";
+      del.textContent = "×";
+      del.title = "Remove " + e.code + " from the library";
+      del.setAttribute("aria-label", "Remove " + e.code);
+      del.addEventListener("click", function () {
+        var used = 0;
+        (state.weeks || [state.placed]).forEach(function (wk2) {
+          (wk2 || []).forEach(function (p) { if (p.code === e.code) used++; });
+        });
+        if (!window.confirm("Remove " + e.code + " from the library?" +
+            (used ? "\n\n" + used + " event" + (used === 1 ? " keeps" : "s keep") +
+              " the details already pulled in; only the link to this code goes away." : ""))) return;
+        state.curriculum = currList().filter(function (x) { return x.code !== e.code; });
+        save(); renderCurr();
+      });
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+    if (shown.length > 400) {
+      var more = document.createElement("p");
+      more.className = "curr-empty";
+      more.textContent = "…and " + (shown.length - 400) + " more. Use the search box.";
+      list.appendChild(more);
+    }
+  }
+
   // ---------- business holds editor ----------
   // Holds are the cycle's own now. Every change confirms, states that the whole
   // calendar follows, then syncs like any other board edit.
@@ -1653,6 +1815,7 @@
     catSel.value = catOf(p);
     document.getElementById("notesWho").value = (whoOf(p) || []).join(", ");
     refreshWhoList();
+    renderCodeSelect(p);
     document.getElementById("notesStart").value = minToTime(p.start);
     document.getElementById("notesEnd").value = minToTime(p.start + p.mins);
     updNotesDur();
@@ -1694,6 +1857,64 @@
     card.style.top = top + "px";
   }
 
+  // The code picker inside the event editor. Picking a code pulls its details into
+  // the box below, where they stay editable -- the pull is a starting point, not a
+  // lock, and nothing reaches the calendar until Publish.
+  function renderCodeSelect(p) {
+    var sel = document.getElementById("notesCode");
+    var all = currList();
+    sel.innerHTML = "";
+    var none = document.createElement("option");
+    none.value = "";
+    none.textContent = all.length ? "— not mapped —" : "— no codes in the library yet —";
+    sel.appendChild(none);
+    all.forEach(function (e) {
+      var o = document.createElement("option");
+      o.value = e.code;
+      o.textContent = e.code + " · " + e.title + (e.mins ? " (" + e.mins + "m)" : "");
+      sel.appendChild(o);
+    });
+    sel.value = p && p.code && currByCode(p.code) ? p.code : "";
+    document.getElementById("notesPull").disabled = !sel.value;
+    showCodeInfo();
+  }
+  function showCodeInfo() {
+    var sel = document.getElementById("notesCode");
+    var info = document.getElementById("notesCodeInfo");
+    var e = currByCode(sel.value);
+    if (!currList().length) {
+      info.textContent = "Paste a curriculum PDF's text into the Curriculum tab to build the code library.";
+    } else if (!e) {
+      info.textContent = "Not mapped to a curriculum code.";
+    } else {
+      info.textContent = e.title + (e.mins ? " · " + e.mins + " min" : "") +
+        " · " + (e.detail ? e.detail.split("\n")[0].slice(0, 70) : "no details on file");
+    }
+  }
+  function pullCode() {
+    var sel = document.getElementById("notesCode");
+    var e = currByCode(sel.value);
+    if (!e) { icsSay("Pick a curriculum code first.", true); return; }
+    var box = document.getElementById("notesText");
+    if (box.value.trim() && box.value.trim() !== (e.detail || "").trim() &&
+        !window.confirm("Replace the details already on this event with " + e.code + "'s?\n\n" +
+          "They stay editable here, and nothing reaches the calendar until you publish.")) return;
+    box.value = e.detail || "";
+    // Duration and title only fill in when they would not overwrite real choices.
+    var titleEl = document.getElementById("notesTitle");
+    if (!titleEl.value.trim()) titleEl.value = e.title;
+    if (e.mins) {
+      var s = timeToMin(document.getElementById("notesStart").value);
+      var cur = timeToMin(document.getElementById("notesEnd").value) - s;
+      if (cur !== e.mins && window.confirm(e.code + " runs " + e.mins + " minutes; this event is " +
+          cur + ". Set it to " + e.mins + " minutes?")) {
+        document.getElementById("notesEnd").value = minToTime(Math.min(DAY_END, s + e.mins));
+        updNotesDur();
+      }
+    }
+    icsSay(e.code + " details pulled in. Edit anything, then save.");
+  }
+
   function saveNotes(applyToSeries) {
     if (!notesTarget) return;
     var text = document.getElementById("notesText").value.trim();
@@ -1716,6 +1937,7 @@
       return;
     }
     var newWho = parsedWho.list;
+    var newCode = document.getElementById("notesCode").value || "";
 
     // Times: hard rules first, so the dialog stays open for a correction.
     var ns = timeToMin(document.getElementById("notesStart").value);
@@ -1784,6 +2006,7 @@
       t.b.start = ns;
       t.b.mins = newMins;
       if (newWho.length) t.b.who = newWho.slice(); else delete t.b.who;
+      if (newCode) t.b.code = newCode; else delete t.b.code;
       if (newVirtual === undefined) delete t.b.virtual; else t.b.virtual = newVirtual;
       // Online-meeting fields only apply at creation, so a format flip needs a fresh
       // identity: the reconciler deletes the old event and creates the new one.
@@ -1824,6 +2047,13 @@
     e.preventDefault(); saveNotes(false);
   });
   document.getElementById("notesAll").addEventListener("click", function () { saveNotes(true); });
+  document.getElementById("notesPull").addEventListener("click", pullCode);
+  document.getElementById("notesCode").addEventListener("change", function () {
+    document.getElementById("notesPull").disabled = !this.value;
+    showCodeInfo();
+    // Choosing a code is the moment you want its details, so offer them straight away.
+    if (this.value) pullCode();
+  });
   document.getElementById("notesCancel").addEventListener("click", function () {
     notesBox.hidden = true; notesTarget = null;
   });
@@ -1955,7 +2185,7 @@
           uid: "p" + (state.seq++),
           refId: repeatTarget.refId, title: repeatTarget.title, mins: repeatTarget.mins,
           cat: repeatTarget.cat, day: d, start: repeatTarget.start,
-          notes: repeatTarget.notes,
+          notes: repeatTarget.notes, code: repeatTarget.code,
           who: repeatTarget.who ? repeatTarget.who.slice() : undefined
         });
         made++;
@@ -2147,6 +2377,7 @@
       var roomy = p.mins * PX >= 48;
       var pWho = whoOf(p);
       el.title = p.title + " · " + cname +
+        (p.code ? " · " + p.code : "") +
         (pWho.length ? " · " + pWho.join(", ") : "") + " — click to edit";
       el.innerHTML =
         "<span class='t'>" + esc(p.title) + "</span>" +
@@ -2154,6 +2385,7 @@
           (effectiveTeams(p, curWeek) ? " · <b>Teams</b>" : (p.virtual === false ? " · in person" : "")) + "</span>" +
         (roomy ? "<span class='cx' style='color:" + esc(bad ? "var(--danger)" : catPaint(catOf(p)).color) + "'>" +
           esc(cname) + (pWho.length ? "<i class='fac'>" + esc(whoLabel(pWho)) + "</i>" : "") + "</span>" : "") +
+        (p.code && roomy ? "<span class='code'>" + esc(p.code) + "</span>" : "") +
         "<div class='rz' aria-hidden='true'></div>";
       // No tiny hover buttons: clicking the block opens the editor dialog, which
       // holds everything -- title, time, category, format, details, duplicate,
@@ -2201,6 +2433,7 @@
     // The card keeps the assignment, so replacing the block re-invites the same person.
     var cw = whoOf(p);
     if (cw.length) card.who = cw.slice();
+    if (p.code) card.code = p.code;
     state.custom.push(card);
     p.refId = id;
     return id;
@@ -2455,6 +2688,38 @@
     });
   }
 
+  document.getElementById("currFind").addEventListener("input", renderCurr);
+  document.getElementById("currForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var box = document.getElementById("currPaste");
+    var msg = document.getElementById("currMsg");
+    var found = parseCurriculum(box.value);
+    if (!found.length) {
+      msg.textContent = "No session codes found in that text. A session line looks like " +
+        "“W2A – Why Wellness Matters (60 min)”.";
+      return;
+    }
+    var all = currList();
+    var added = 0, updated = 0;
+    var replacing = found.filter(function (f) { return !!currByCode(f.code); });
+    if (replacing.length && !window.confirm(
+        found.length + " code" + (found.length === 1 ? "" : "s") + " read from that text.\n\n" +
+        replacing.length + " already in the library (" +
+        replacing.slice(0, 5).map(function (r) { return r.code; }).join(", ") +
+        (replacing.length > 5 ? "…" : "") + ") — replace their details?")) return;
+    found.forEach(function (f) {
+      var hit = currByCode(f.code);
+      if (hit) { hit.title = f.title; hit.mins = f.mins; hit.detail = f.detail; updated++; }
+      else { all.push(f); added++; }
+    });
+    all.sort(function (a, b) { return a.code.localeCompare(b.code); });
+    save();
+    renderCurr();
+    box.value = "";
+    msg.textContent = added + " code" + (added === 1 ? "" : "s") + " added" +
+      (updated ? ", " + updated + " updated" : "") + ". Map them from any event's editor.";
+  });
+
   document.getElementById("catform").addEventListener("submit", function (e) {
     e.preventDefault();
     var nameEl = document.getElementById("nc-name");
@@ -2493,7 +2758,7 @@
     legendEl.innerHTML = html;
   }
 
-  function renderAll() { closeCatMenu(); renderHolds(); renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); renderHoldsEditor(); renderPeerCursors(); }
+  function renderAll() { closeCatMenu(); renderHolds(); renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); renderHoldsEditor(); renderPeerCursors(); renderCurr(); }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -2631,7 +2896,7 @@
         fmt(slot) + " – " + fmt(slot + src.mins) + "?")) return;
     var copy = {
       uid: "p" + (state.seq++), refId: src.refId || null, title: src.title,
-      mins: src.mins, cat: src.cat, day: day, start: slot, notes: src.notes,
+      mins: src.mins, cat: src.cat, day: day, start: slot, notes: src.notes, code: src.code,
       who: src.who && src.who.length ? src.who.slice() : undefined
     };
     if (src.virtual !== undefined) copy.virtual = src.virtual;
@@ -2648,7 +2913,7 @@
     if (!src) { icsSay("Click a block first, then Ctrl+C copies it.", true); return; }
     clipboard = {
       title: src.title, mins: src.mins, cat: src.cat, day: src.day,
-      start: src.start, notes: src.notes, refId: src.refId,
+      start: src.start, notes: src.notes, refId: src.refId, code: src.code,
       who: src.who && src.who.length ? src.who.slice() : undefined
     };
     if (src.virtual !== undefined) clipboard.virtual = src.virtual;
@@ -2784,7 +3049,7 @@
           start: drag.dropStart,
           // A card made from a removed block keeps its details; placing it again
           // restores them, so a shelf round-trip loses nothing.
-          notes: drag.item.notes,
+          notes: drag.item.notes, code: drag.item.code,
           who: drag.item.who && drag.item.who.length ? drag.item.who.slice() : undefined
         });
       } else {
@@ -3188,7 +3453,7 @@
           uid: "p" + (state.seq++),
           refId: p.refId, title: p.title, mins: p.mins,
           cat: p.cat, day: p.day, start: p.start,
-          notes: p.notes,
+          notes: p.notes, code: p.code,
           who: p.who ? p.who.slice() : undefined
         };
       });

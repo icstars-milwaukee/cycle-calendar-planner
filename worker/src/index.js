@@ -268,6 +268,8 @@ function toEvents(plan, room) {
         // Facilitators become real attendees, which is what puts the session on their
         // own calendar. Inherited from the shelf card when the block carries none.
         who: assignedTo(p, plan),
+        // Curriculum code, if this workshop has been mapped to one.
+        code: typeof p.code === "string" ? p.code.slice(0, 16) : "",
       });
     }
   }
@@ -436,16 +438,21 @@ function graphBody(ev) {
       content: (ev.notes ? ev.notes + "\n\n----\n" : "") +
         "Cycle Calendar Planner" + (ev.category ? " - " + ev.category : "") +
         (ev.week ? "\nWeek " + ev.week + " of " + CYCLE_WEEKS : "") +
+        (ev.code ? "\nCurriculum: " + ev.code : "") +
         ((ev.who || []).length ? "\nFacilitator: " + ev.who.join(", ") : "") +
         "\nDo not edit here; edit the planner and it will be overwritten on the next sync." +
         "\nref: " + ev.uid +
         "\nnh: " + notesHash(ev.notes || "") +
-        // Attendee fingerprint. The flow's calendarView listing does not return
-        // attendees (the same gap that hides category drift), so reassignment is
-        // detected through the body, which it does return.
-        "\nas: " + notesHash((ev.who || []).join(",")),
+        // Fingerprint for the fields the flow's calendarView listing does not return
+        // -- attendees (the same gap that hides category drift) and the curriculum
+        // code. Reassigning or remapping is detected through the body, which it does.
+        "\nas: " + extrasHash(ev),
     },
   };
+}
+
+function extrasHash(ev) {
+  return notesHash((ev.who || []).join(",") + "|" + (ev.code || ""));
 }
 
 function notesHash(s) {
@@ -605,11 +612,11 @@ function reconcile(publishedPlan, room, existingRaw) {
     const bodyText = String((keep.body && keep.body.content) || keep.bodyPreview || "");
     const foundNh = (/nh:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || notesHash("");
     const sameNotes = foundNh === notesHash(ev.notes || "");
-    // Reassignment: same fingerprint trick. An event stamped before facilitators
-    // existed carries no as: line and reads as unassigned, so it only updates once
-    // someone actually assigns it.
-    const foundAs = (/as:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || notesHash("");
-    const sameWho = foundAs === notesHash((ev.who || []).join(","));
+    // Reassignment or a curriculum remap: same fingerprint trick. An event stamped
+    // before either existed carries no as: line and reads as unassigned and unmapped,
+    // so it only updates once someone actually assigns or maps it.
+    const foundAs = (/as:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || extrasHash({});
+    const sameWho = foundAs === extrasHash(ev);
     if (!sameSubject || !sameStart || !sameEnd || !sameCat || !sameNotes || !sameWho) {
       // Online-meeting fields are creation-only in Graph; patching them onto an
       // existing event can fail the whole update, so they stay out of PATCH bodies.
