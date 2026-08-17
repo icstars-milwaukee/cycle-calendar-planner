@@ -1524,6 +1524,64 @@
     }).filter(function (e) { return e.code && e.title; });
   }
 
+  // Pulling a code writes the event description in a fixed shape:
+  //   <event title> by <facilitator>
+  //   <workshop title> · <code>
+  //   Outcome / Artifact
+  // The curriculum text carries labelled sections, so lift them out by label; a
+  // section runs until the next label, since the PDFs wrap long lines.
+  var CURR_LABELS = /^(standards|outcome|outcomes|artifact|artifacts|transfer strategy|rationale|enhancements integrated|enhancements)\b\s*:?/i;
+  function currSection(detail, name) {
+    var lines = String(detail || "").split("\n");
+    var want = new RegExp("^" + name + "s?\\b\\s*:?", "i");
+    var out = [], on = false;
+    for (var i = 0; i < lines.length; i++) {
+      var t = lines[i].trim();
+      if (want.test(t)) {
+        on = true;
+        out.push(t.replace(want, "").replace(/^[\s:–—-]+/, ""));
+        continue;
+      }
+      if (on) {
+        if (!t || CURR_LABELS.test(t) || /^session\b/i.test(t)) break;
+        out.push(t);
+      }
+    }
+    return out.join(" ").replace(/\s+/g, " ").trim();
+  }
+
+  // "carl.lewis@x.org" reads as Carl Lewis; anything else keeps the name as typed.
+  function facDisplay(email) {
+    var local = String(email || "").split("@")[0];
+    if (!local) return "";
+    if (local.indexOf(".") > 0) {
+      return local.split(".").map(function (part) {
+        return part ? part.charAt(0).toUpperCase() + part.slice(1) : part;
+      }).join(" ");
+    }
+    return local;
+  }
+
+  function composeDetails(entry, title, whoArr) {
+    var head = (title || entry.title || "").trim();
+    var by = (whoArr || []).map(facDisplay).filter(Boolean).join(" & ");
+    var lines = [head + (by ? " by " + by : "")];
+    lines.push(entry.title + (entry.code ? " · " + entry.code : "") +
+      (entry.mins ? " · " + entry.mins + " min" : ""));
+    var outcome = currSection(entry.detail, "outcome");
+    var artifact = currSection(entry.detail, "artifact");
+    if (outcome || artifact) {
+      lines.push("");
+      if (outcome) lines.push("Outcome: " + outcome);
+      if (artifact) lines.push("Artifact: " + artifact);
+    } else if (entry.detail) {
+      // No labelled sections in this entry -- keep its text rather than lose it.
+      lines.push("");
+      lines.push(entry.detail.trim());
+    }
+    return lines.join("\n");
+  }
+
   function renderCurr() {
     var list = document.getElementById("currList");
     if (!list) return;
@@ -1774,6 +1832,9 @@
 
   var notesBox = document.getElementById("notesBox");
   var notesTarget = null;
+  // The exact text the last pull wrote. While the box still holds it untouched,
+  // renaming the event or changing the facilitator rewrites the heading to match.
+  var lastComposed = null;
 
   function seriesOf(p) {
     var out = [];
@@ -1797,6 +1858,7 @@
 
   function openNotes(p) {
     notesTarget = p;
+    lastComposed = null;
     document.getElementById("notesWhat").textContent = "“" + p.title + "”";
     document.getElementById("notesTitle").value = p.title;
     document.getElementById("notesText").value = p.notes || "";
@@ -1903,10 +1965,13 @@
     var e = currByCode(sel.value);
     if (!e) { icsSay("Pick a curriculum code first.", true); return; }
     var box = document.getElementById("notesText");
-    if (box.value.trim() && box.value.trim() !== (e.detail || "").trim() &&
+    var titleEl0 = document.getElementById("notesTitle");
+    var text = composeDetails(e, titleEl0.value, parseWho(document.getElementById("notesWho").value).list);
+    if (box.value.trim() && box.value.trim() !== text.trim() && box.value !== lastComposed &&
         !window.confirm("Replace the details already on this event with " + e.code + "'s?\n\n" +
           "They stay editable here, and nothing reaches the calendar until you publish.")) return;
-    box.value = e.detail || "";
+    box.value = text;
+    lastComposed = text;
     // Duration and title only fill in when they would not overwrite real choices.
     var titleEl = document.getElementById("notesTitle");
     if (!titleEl.value.trim()) titleEl.value = e.title;
@@ -2056,6 +2121,20 @@
   });
   document.getElementById("notesAll").addEventListener("click", function () { saveNotes(true); });
   document.getElementById("notesPull").addEventListener("click", pullCode);
+  // Keep the composed heading true to the title and facilitator, but only while the
+  // text is still exactly what the pull wrote -- never overwrite someone's edits.
+  function recomposeIfUntouched() {
+    var box = document.getElementById("notesText");
+    if (lastComposed === null || box.value !== lastComposed) return;
+    var e = currByCode(document.getElementById("notesCode").value);
+    if (!e) return;
+    var text = composeDetails(e, document.getElementById("notesTitle").value,
+      parseWho(document.getElementById("notesWho").value).list);
+    box.value = text;
+    lastComposed = text;
+  }
+  document.getElementById("notesTitle").addEventListener("input", recomposeIfUntouched);
+  document.getElementById("notesWho").addEventListener("input", recomposeIfUntouched);
   document.getElementById("notesCode").addEventListener("change", function () {
     document.getElementById("notesPull").disabled = !this.value;
     showCodeInfo();
