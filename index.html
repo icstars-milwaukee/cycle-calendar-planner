@@ -1559,7 +1559,9 @@
   //   Outcome / Artifact
   // The curriculum text carries labelled sections, so lift them out by label; a
   // section runs until the next label, since the PDFs wrap long lines.
-  var CURR_LABELS = /^(standards|outcome|outcomes|artifact|artifacts|transfer strategy|rationale|enhancements integrated|enhancements)\b\s*:?/i;
+  // Every label a section can run into. Missing one lets a section swallow the next --
+  // "Assessment Connection:" was trailing the Artifact onto the calendar.
+  var CURR_LABELS = /^(standards|outcome|outcomes|artifact|artifacts|transfer strategy|rationale|enhancements integrated|enhancements|assessment connection|assessment|deliverable|deliverables|materials|facilitator|facilitators|prep|preparation|agenda|notes)\b\s*:?/i;
   function currSection(detail, name) {
     var lines = String(detail || "").split("\n");
     var want = new RegExp("^" + name + "s?\\b\\s*:?", "i");
