@@ -271,6 +271,12 @@
   .curr-pick { display: flex; gap: 6px; margin-bottom: 6px; }
   .curr-pick select { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
   .curr-pick button { flex: none; }
+  .curr-mins {
+    display: flex; align-items: center; gap: 8px; margin: -4px 0 10px;
+    font-size: 11.5px; color: var(--ink-soft);
+  }
+  .curr-mins[hidden] { display: none; }
+  .curr-mins button { flex: none; padding: 3px 8px; font-size: 11px; }
   /* The mapped code, shown on a block. */
   .blk.ws .code {
     position: absolute; right: 4px; bottom: 2px; font-size: 9.5px; font-weight: 700;
@@ -931,6 +937,12 @@
           <button type="button" id="notesPull" title="Pull this code's details into the box below">Pull details</button>
         </div>
         <p class="rep-note" id="notesCodeInfo"></p>
+        <!-- The code's length is only ever a suggestion: the time changes when
+             someone asks for it here, never as a side effect of picking a code. -->
+        <div class="curr-mins" id="notesMinsRow" hidden>
+          <span id="notesMinsMsg"></span>
+          <button type="button" id="notesMinsFix"></button>
+        </div>
       </div>
 
       <div class="rep-label">Details <span class="rep-hint">— appear in the calendar event's description</span></div>
@@ -1946,6 +1958,7 @@
     sel.value = p && p.code && currByCode(p.code) ? p.code : "";
     document.getElementById("notesPull").disabled = !sel.value;
     showCodeInfo();
+    updateMinsRow();
   }
   function showCodeInfo() {
     var sel = document.getElementById("notesCode");
@@ -1972,19 +1985,27 @@
           "They stay editable here, and nothing reaches the calendar until you publish.")) return;
     box.value = text;
     lastComposed = text;
-    // Duration and title only fill in when they would not overwrite real choices.
+    // Title fills in only when the event has none -- it never overwrites a real one.
     var titleEl = document.getElementById("notesTitle");
-    if (!titleEl.value.trim()) titleEl.value = e.title;
-    if (e.mins) {
-      var s = timeToMin(document.getElementById("notesStart").value);
-      var cur = timeToMin(document.getElementById("notesEnd").value) - s;
-      if (cur !== e.mins && window.confirm(e.code + " runs " + e.mins + " minutes; this event is " +
-          cur + ". Set it to " + e.mins + " minutes?")) {
-        document.getElementById("notesEnd").value = minToTime(Math.min(DAY_END, s + e.mins));
-        updNotesDur();
-      }
-    }
+    if (!titleEl.value.trim()) { titleEl.value = e.title; recomposeIfUntouched(); }
+    // The time is left exactly as it was. If the code's length differs, that is
+    // reported below the picker with a button, so changing it stays a decision.
+    updateMinsRow();
     icsSay(e.code + " details pulled in. Edit anything, then save.");
+  }
+
+  // Shows "W2A runs 60 min · this event is 70" with a button that matches it, only
+  // when the two actually differ.
+  function updateMinsRow() {
+    var row = document.getElementById("notesMinsRow");
+    var e = currByCode(document.getElementById("notesCode").value);
+    var s = timeToMin(document.getElementById("notesStart").value);
+    var en = timeToMin(document.getElementById("notesEnd").value);
+    if (!e || !e.mins || s === null || en === null || en - s === e.mins) { row.hidden = true; return; }
+    document.getElementById("notesMinsMsg").textContent =
+      e.code + " runs " + e.mins + " min · this event is " + (en - s);
+    document.getElementById("notesMinsFix").textContent = "Make it " + e.mins + " min";
+    row.hidden = false;
   }
 
   function saveNotes(applyToSeries) {
@@ -2113,8 +2134,29 @@
       el.style.color = "";
     }
   }
-  document.getElementById("notesStart").addEventListener("input", updNotesDur);
-  document.getElementById("notesEnd").addEventListener("input", updNotesDur);
+  document.getElementById("notesStart").addEventListener("input", function () { updNotesDur(); updateMinsRow(); });
+  document.getElementById("notesEnd").addEventListener("input", function () { updNotesDur(); updateMinsRow(); });
+  document.getElementById("notesMinsFix").addEventListener("click", function () {
+    var e = currByCode(document.getElementById("notesCode").value);
+    var s = timeToMin(document.getElementById("notesStart").value);
+    if (!e || !e.mins || s === null) return;
+    var end = s + e.mins;
+    if (end > DAY_END) {
+      window.alert("That would run past the end of the day. Move the start time first.");
+      return;
+    }
+    if (overlapHit(notesTarget.day, s, e.mins, notesTarget.uid)) {
+      window.alert("Events can't stack — " + fmt(s) + " – " + fmt(end) +
+        " would overlap another event on " + DAYS[notesTarget.day] + ".");
+      return;
+    }
+    if (!window.confirm("Set this event to " + fmt(s) + " – " + fmt(end) +
+        " (" + e.mins + " minutes) to match " + e.code + "?\n\n" +
+        "Nothing reaches the calendar until you save and publish.")) return;
+    document.getElementById("notesEnd").value = minToTime(end);
+    updNotesDur();
+    updateMinsRow();
+  });
 
   document.getElementById("notesForm").addEventListener("submit", function (e) {
     e.preventDefault(); saveNotes(false);
