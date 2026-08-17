@@ -923,12 +923,15 @@
       <div class="rep-label">Title</div>
       <input type="text" id="notesTitle" maxlength="120" aria-label="Event title" />
 
-      <div class="rep-label">Curriculum</div>
-      <div class="curr-pick">
-        <select id="notesCode" aria-label="Curriculum code"></select>
-        <button type="button" id="notesPull" title="Pull this code's details into the box below">Pull details</button>
+      <!-- Only shown once the library holds codes; an empty picker is just noise. -->
+      <div id="notesCurrWrap" hidden>
+        <div class="rep-label">Curriculum</div>
+        <div class="curr-pick">
+          <select id="notesCode" aria-label="Curriculum code"></select>
+          <button type="button" id="notesPull" title="Pull this code's details into the box below">Pull details</button>
+        </div>
+        <p class="rep-note" id="notesCodeInfo"></p>
       </div>
-      <p class="rep-note" id="notesCodeInfo"></p>
 
       <div class="rep-label">Details <span class="rep-hint">— appear in the calendar event's description</span></div>
       <textarea id="notesText" rows="5" maxlength="4000"
@@ -1863,10 +1866,14 @@
   function renderCodeSelect(p) {
     var sel = document.getElementById("notesCode");
     var all = currList();
+    // With no library there is nothing to map to, so the whole section stays out of
+    // the way until codes exist.
+    document.getElementById("notesCurrWrap").hidden = !all.length;
+    if (!all.length) return;
     sel.innerHTML = "";
     var none = document.createElement("option");
     none.value = "";
-    none.textContent = all.length ? "— not mapped —" : "— no codes in the library yet —";
+    none.textContent = "— not mapped —";
     sel.appendChild(none);
     all.forEach(function (e) {
       var o = document.createElement("option");
@@ -1883,7 +1890,7 @@
     var info = document.getElementById("notesCodeInfo");
     var e = currByCode(sel.value);
     if (!currList().length) {
-      info.textContent = "Paste a curriculum PDF's text into the Curriculum tab to build the code library.";
+      info.textContent = "";
     } else if (!e) {
       info.textContent = "Not mapped to a curriculum code.";
     } else {
@@ -1937,7 +1944,8 @@
       return;
     }
     var newWho = parsedWho.list;
-    var newCode = document.getElementById("notesCode").value || "";
+    // With the section hidden (no library) the picker must not clear an existing map.
+    var newCode = currList().length ? (document.getElementById("notesCode").value || "") : (notesTarget.code || "");
 
     // Times: hard rules first, so the dialog stays open for a correction.
     var ns = timeToMin(document.getElementById("notesStart").value);
