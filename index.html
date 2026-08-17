@@ -277,6 +277,14 @@
   }
   .curr-mins[hidden] { display: none; }
   .curr-mins button { flex: none; padding: 3px 8px; font-size: 11px; }
+  /* Week-copy picker: fourteen small targets, so lay them out as a grid. */
+  .copy-weeks {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px 8px; margin-bottom: 10px;
+  }
+  .copy-weeks label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+  .copy-weeks .wk-has { font-style: normal; font-size: 10px; color: var(--ink-soft); }
+  .copy-quick { margin-top: 0; }
+  .copy-quick button { padding: 4px 8px; font-size: 11px; }
   /* The mapped code, shown on a block. */
   .blk.ws .code {
     position: absolute; right: 4px; bottom: 2px; font-size: 9.5px; font-weight: 700;
@@ -918,8 +926,29 @@
       <button id="zoomFit" type="button">Fit</button>
       <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
     </span>
-    <button id="copyToAll" type="button">Apply this week to all 14</button>
-    <button id="copyToRest" type="button">Apply to week <span id="restFrom"></span> onward</button>
+    <button id="copyWeek" type="button">Copy this week to…</button>
+  </div>
+
+  <!-- Copy the week on screen into any weeks chosen, not just the ones after it. -->
+  <div class="gate" id="copyBox" hidden>
+    <form class="gate-card" id="copyForm">
+      <h2>Copy week <span id="copyFrom"></span> to…</h2>
+      <p class="rep-note" id="copyWhat"></p>
+
+      <div class="rep-label">Weeks</div>
+      <div class="rep-weeks copy-weeks" id="copyPick"></div>
+      <div class="gate-row copy-quick">
+        <button type="button" id="copyAllBtn">All other weeks</button>
+        <button type="button" id="copyRestBtn">Weeks after this</button>
+        <button type="button" id="copyNoneBtn">Clear</button>
+      </div>
+
+      <p class="rep-note" id="copyNote"></p>
+      <div class="gate-row">
+        <button type="submit" class="primary">Copy</button>
+        <button type="button" id="copyCancel">Cancel</button>
+      </div>
+    </form>
   </div>
 
   <div class="gate" id="notesBox" hidden>
@@ -985,6 +1014,38 @@
         <button type="submit" class="primary">Save for this event</button>
         <button type="button" id="notesAll" hidden>Save for all <span id="notesAllN"></span></button>
         <button type="button" id="notesCancel">Cancel</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Business holds are editable from the calendar itself, not only from settings. -->
+  <div class="gate" id="holdBox" hidden>
+    <form class="gate-card" id="holdForm">
+      <h2>Edit <span id="holdWhat"></span></h2>
+      <p class="rep-note">A business hold repeats every week of the cycle, so a change here
+        changes it on every week.</p>
+
+      <div class="rep-label">Name</div>
+      <input type="text" id="holdName" maxlength="60" aria-label="Hold name" />
+
+      <div class="rep-label">Time</div>
+      <div class="time-edit">
+        <input type="time" id="holdStart" step="60" aria-label="Hold start" />
+        <span>–</span>
+        <input type="time" id="holdEnd" step="60" aria-label="Hold end" />
+        <span class="time-dur" id="holdDur"></span>
+      </div>
+
+      <div class="rep-label">Days</div>
+      <div class="rep-days" id="holdDayPick"></div>
+
+      <p class="rep-note" id="holdNote"></p>
+      <div class="gate-row ev-actions">
+        <button type="button" id="holdRemove" class="danger">× Remove this hold</button>
+      </div>
+      <div class="gate-row">
+        <button type="submit" class="primary">Save for the cycle</button>
+        <button type="button" id="holdCancel">Cancel</button>
       </div>
     </form>
   </div>
@@ -1178,7 +1239,7 @@
       .filter(function (h) { return !h.days || h.days.indexOf(d) >= 0; })
       .map(function (h) {
         return { t: h.title, s: h.start, e: h.end, k: h.kind || "cust",
-                 ics: h.ics || ("Hold: " + h.title), days: h.days };
+                 ics: h.ics || ("Hold: " + h.title), days: h.days, id: h.id };
       });
   }
   function fixedFor(d) {
@@ -1939,15 +2000,21 @@
   // there is room, to its left otherwise, clamped inside the viewport. Anything
   // without a block on screen (edge cases) falls back to the centered dialog.
   function positionNotesNear(p) {
-    var card = notesBox.querySelector(".gate-card");
     var blk = p && p.uid ? document.querySelector(".blk[data-uid='" + p.uid + "']") : null;
-    if (!blk) {
-      notesBox.classList.remove("near");
+    placeNear(notesBox, blk);
+  }
+
+  // Anchor a dialog beside the block it belongs to: right of it when there is room,
+  // left otherwise, always inside the viewport. With no block, fall back to centred.
+  function placeNear(box, anchor) {
+    var card = box.querySelector(".gate-card");
+    if (!anchor) {
+      box.classList.remove("near");
       card.style.left = card.style.top = "";
       return;
     }
-    notesBox.classList.add("near");
-    var r = blk.getBoundingClientRect();
+    box.classList.add("near");
+    var r = anchor.getBoundingClientRect();
     var cw = card.offsetWidth || 330, ch = card.offsetHeight || 400;
     var left = r.right + 10;
     if (left + cw > window.innerWidth - 8) left = r.left - cw - 10;
@@ -2030,6 +2097,94 @@
     document.getElementById("notesMinsFix").textContent = "Make it " + e.mins + " min";
     row.hidden = false;
   }
+
+  // ---------- editing a business hold from the calendar ----------
+  var holdBox = document.getElementById("holdBox");
+  var holdTarget = null;
+
+  function openHoldEdit(h, anchor) {
+    holdTarget = h;
+    document.getElementById("holdWhat").textContent = "“" + h.title + "”";
+    document.getElementById("holdName").value = h.title;
+    document.getElementById("holdStart").value = minToTime(h.start);
+    document.getElementById("holdEnd").value = minToTime(h.end);
+    var pick = document.getElementById("holdDayPick");
+    pick.innerHTML = "";
+    var on = holdDays(h);
+    DOWS3.forEach(function (name, i) {
+      var lab = document.createElement("label");
+      lab.innerHTML = "<input type='checkbox' value='" + i + "'" +
+        (on.indexOf(i) >= 0 ? " checked" : "") + " /> " + name;
+      pick.appendChild(lab);
+    });
+    updHoldDur();
+    document.getElementById("holdNote").textContent = h.kind === "blocked"
+      ? "This one blocks scheduling: nothing can be placed inside it."
+      : "";
+    holdBox.hidden = false;
+    placeNear(holdBox, anchor);
+    setTimeout(function () { document.getElementById("holdName").focus(); }, 0);
+  }
+
+  function updHoldDur() {
+    var s = timeToMin(document.getElementById("holdStart").value);
+    var e = timeToMin(document.getElementById("holdEnd").value);
+    var el = document.getElementById("holdDur");
+    if (s === null || e === null || e <= s || s < DAY_START || e > DAY_END) {
+      el.textContent = "between 8:30 AM and 7:15 PM";
+      el.style.color = "var(--danger)";
+    } else {
+      el.textContent = (e - s) + " min";
+      el.style.color = "";
+    }
+  }
+  document.getElementById("holdStart").addEventListener("input", updHoldDur);
+  document.getElementById("holdEnd").addEventListener("input", updHoldDur);
+
+  document.getElementById("holdForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var h = holdTarget;
+    if (!h) return;
+    var name = document.getElementById("holdName").value.trim();
+    var s = timeToMin(document.getElementById("holdStart").value);
+    var e = timeToMin(document.getElementById("holdEnd").value);
+    var days = [].slice.call(document.querySelectorAll("#holdDayPick input:checked"))
+      .map(function (c) { return +c.value; });
+    if (!name) { window.alert("The hold needs a name."); return; }
+    if (s === null || e === null || e <= s || s < DAY_START || e > DAY_END) {
+      window.alert("Times must fall between 8:30 AM and 7:15 PM, and end after they start.");
+      return;
+    }
+    if (!days.length) { window.alert("Pick at least one day, or remove the hold instead."); return; }
+    var moved = s !== h.start || e !== h.end;
+    var renamed = name !== h.title;
+    var dayChange = days.join(",") !== holdDays(h).join(",");
+    if (!moved && !renamed && !dayChange) { holdBox.hidden = true; holdTarget = null; return; }
+    if (!window.confirm("Save “" + name + "”" + (moved ? " at " + fmt(s) + " – " + fmt(e) : "") +
+        (dayChange ? " on " + days.map(function (d) { return DOWS3[d]; }).join(", ") : "") +
+        " for every week of the cycle?")) return;
+    h.title = name; h.start = s; h.end = e; h.days = days;
+    holdBox.hidden = true; holdTarget = null;
+    save(); renderAll();
+    icsSay("“" + name + "” updated across the cycle." +
+      (state.liveSync ? " The calendar follows in a few seconds." : ""));
+  });
+
+  document.getElementById("holdRemove").addEventListener("click", function () {
+    var h = holdTarget;
+    if (!h) return;
+    if (!window.confirm("Remove the hold “" + h.title + "”?\n\n" +
+        "It disappears from every week, and its calendar events go on the next sync.")) return;
+    state.holds = boardHolds().filter(function (x) { return x !== h; });
+    holdBox.hidden = true; holdTarget = null;
+    save(); renderAll();
+  });
+  document.getElementById("holdCancel").addEventListener("click", function () {
+    holdBox.hidden = true; holdTarget = null;
+  });
+  holdBox.addEventListener("pointerdown", function (e) {
+    if (e.target === holdBox) { holdBox.hidden = true; holdTarget = null; }
+  });
 
   function saveNotes(applyToSeries) {
     if (!notesTarget) return;
@@ -2501,6 +2656,17 @@
         el.style.height = ((f.e - f.s) * PX - 2) + "px";
         if (f.k === "brk") el.textContent = f.t;
         else el.innerHTML = "<span class='t'>" + esc(f.t) + "</span><span class='d'>" + fmt(f.s) + " – " + fmt(f.e) + "</span>";
+        // Holds are events too: clicking one edits it instead of sending people to
+        // settings. The edit applies to the whole cycle, which the dialog says.
+        if (f.id) {
+          el.setAttribute("data-hold", f.id);
+          el.style.cursor = "pointer";
+          el.title = f.t + " · " + fmt(f.s) + " – " + fmt(f.e) + " — business hold, click to edit";
+          el.addEventListener("click", function (ev) {
+            var h = boardHolds().filter(function (x) { return x.id === ev.currentTarget.getAttribute("data-hold"); })[0];
+            if (h) openHoldEdit(h, ev.currentTarget);
+          });
+        }
         dayCols[d].appendChild(el);
       }
     }
@@ -3494,7 +3660,6 @@
   var weekPickEl = document.getElementById("weekPick");
   var weekDatesEl = document.getElementById("weekDates");
   var weekbarEl = document.getElementById("weekbar");
-  var restFromEl = document.getElementById("restFrom");
 
   function mondayOfWeek(w) {
     return state.weekOf ? addDays(state.weekOf, (w - 1) * 7) : null;
@@ -3522,7 +3687,6 @@
       }
     }
     weekPickEl.value = String(curWeek);
-    restFromEl.textContent = String(curWeek);
 
     var mon = mondayOfWeek(curWeek);
     if (!mon) {
@@ -3613,27 +3777,75 @@
     state.placed = state.weeks[curWeek - 1];
   }
 
-  document.getElementById("copyToAll").addEventListener("click", function () {
-    var n = (state.weeks[curWeek - 1] || []).length;
-    if (!window.confirm("Copy week " + curWeek + "'s " + n + " workshop" + (n === 1 ? "" : "s") +
-        " to all 14 weeks?\n\nEvery other week's current contents are replaced.")) return;
-    var targets = [];
-    for (var w = 1; w <= CYCLE_WEEKS; w++) if (w !== curWeek) targets.push(w);
-    copyWeekTo(curWeek, targets);
-    save(); renderWeekBar(); renderAll();
-    icsSay("Week " + curWeek + " copied to all 14 weeks.");
-  });
+  // Copy the week on screen into whichever weeks are ticked -- any of the fourteen,
+  // in any combination, not only the ones that follow it.
+  var copyBox = document.getElementById("copyBox");
 
-  document.getElementById("copyToRest").addEventListener("click", function () {
-    if (curWeek >= CYCLE_WEEKS) { icsSay("Week 14 is the last week.", true); return; }
+  function copyChecks() {
+    return [].slice.call(document.querySelectorAll("#copyPick input:checked"))
+      .map(function (c) { return +c.value; });
+  }
+  function updCopyNote() {
+    var picked = copyChecks();
+    var busy = picked.filter(function (w) { return (state.weeks[w - 1] || []).length; });
+    document.getElementById("copyNote").textContent = !picked.length
+      ? "Nothing selected yet."
+      : picked.length + " week" + (picked.length === 1 ? "" : "s") + " selected" +
+        (busy.length ? " · " + busy.length + " already ha" + (busy.length === 1 ? "s" : "ve") +
+          " workshops and will be replaced" : "");
+  }
+  function openCopy() {
     var n = (state.weeks[curWeek - 1] || []).length;
+    if (!n && !window.confirm("Week " + curWeek + " is empty. Copy it anyway, clearing the weeks you pick?")) return;
+    document.getElementById("copyFrom").textContent = curWeek;
+    document.getElementById("copyWhat").textContent =
+      n + " workshop" + (n === 1 ? "" : "s") + " on this week's board. Each week you pick is replaced by them.";
+    var pick = document.getElementById("copyPick");
+    pick.innerHTML = "";
+    for (var w = 1; w <= CYCLE_WEEKS; w++) {
+      if (w === curWeek) continue;
+      var count = (state.weeks[w - 1] || []).length;
+      var lab = document.createElement("label");
+      lab.innerHTML = "<input type='checkbox' value='" + w + "' /> " + w +
+        (count ? " <i class='wk-has'>(" + count + ")</i>" : "");
+      pick.appendChild(lab);
+    }
+    pick.addEventListener("change", updCopyNote);
+    updCopyNote();
+    copyBox.hidden = false;
+    placeNear(copyBox, document.getElementById("copyWeek"));
+  }
+  document.getElementById("copyWeek").addEventListener("click", openCopy);
+  document.getElementById("copyCancel").addEventListener("click", function () { copyBox.hidden = true; });
+  copyBox.addEventListener("pointerdown", function (e) { if (e.target === copyBox) copyBox.hidden = true; });
+  document.getElementById("copyAllBtn").addEventListener("click", function () {
+    [].slice.call(document.querySelectorAll("#copyPick input")).forEach(function (c) { c.checked = true; });
+    updCopyNote();
+  });
+  document.getElementById("copyRestBtn").addEventListener("click", function () {
+    [].slice.call(document.querySelectorAll("#copyPick input")).forEach(function (c) {
+      c.checked = +c.value > curWeek;
+    });
+    updCopyNote();
+  });
+  document.getElementById("copyNoneBtn").addEventListener("click", function () {
+    [].slice.call(document.querySelectorAll("#copyPick input")).forEach(function (c) { c.checked = false; });
+    updCopyNote();
+  });
+  document.getElementById("copyForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var targets = copyChecks();
+    if (!targets.length) { window.alert("Pick at least one week to copy into."); return; }
+    var n = (state.weeks[curWeek - 1] || []).length;
+    var busy = targets.filter(function (w) { return (state.weeks[w - 1] || []).length; });
+    var list = targets.length > 6 ? targets.length + " weeks" : "week" + (targets.length === 1 ? " " : "s ") + targets.join(", ");
     if (!window.confirm("Copy week " + curWeek + "'s " + n + " workshop" + (n === 1 ? "" : "s") +
-        " to weeks " + (curWeek + 1) + "–" + CYCLE_WEEKS + "?\n\nThose weeks' current contents are replaced.")) return;
-    var targets = [];
-    for (var w = curWeek + 1; w <= CYCLE_WEEKS; w++) targets.push(w);
+        " into " + list + "?" +
+        (busy.length ? "\n\n" + busy.length + " of them already have workshops — those are replaced." : ""))) return;
     copyWeekTo(curWeek, targets);
+    copyBox.hidden = true;
     save(); renderWeekBar(); renderAll();
-    icsSay("Week " + curWeek + " copied to weeks " + (curWeek + 1) + "–" + CYCLE_WEEKS + ".");
+    icsSay("Week " + curWeek + " copied into " + list + ".");
   });
 
   function renderCycle() {
