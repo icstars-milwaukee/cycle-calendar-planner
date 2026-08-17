@@ -1482,7 +1482,9 @@
   // opens an entry, and every line under it until the next session line is its
   // details. Mapping a workshop to a code pulls those details into the event, where
   // they stay editable -- nothing reaches the calendar until someone publishes.
-  var CODE_RE = /^(?:session\s+)?([A-Z]{1,4}\s?\d{1,2}[A-Z]?(?:\.\d+)?)\s*(?:[–—:-]\s*)(.+)$/i;
+  // Headings may carry a revision marker ("V.2 Session T2A – ...") before the code.
+  var CODE_RE = /^(?:v\.?\s?\d+(?:\.\d+)?\s+)?(?:session\s+)?([A-Z]{1,4}\s?\d{1,2}[A-Z]?(?:\.\d+)?)\s*(?:[–—:-]\s*)(.+)$/i;
+  var HEADING_RE = /^(?:v\.?\s?\d+(?:\.\d+)?\s+)?session\b/i;
 
   function currList() {
     if (!Array.isArray(state.curriculum)) state.curriculum = [];
@@ -1493,8 +1495,9 @@
     return currList().filter(function (e) { return e.code === k; })[0] || null;
   }
 
-  // Durations survive the PDF's letter-spacing, which can split "min" into "m in".
-  var MINS_RE = /\(\s*(\d+)\s*m\s*in[^)]*\)?/i;
+  // Durations survive the PDF's letter-spacing, which splits "min" as "m in" or
+  // "mi n", and a range like "(60–90 min)" -- the first number is the planned length.
+  var MINS_RE = /\(\s*(\d+)\s*(?:[–—-]\s*\d+\s*)?m\s*i?\s*n[^)]*\)?/i;
   var BODY_START_RE = /^(●|•|-|standards|outcome|outcomes|artifact|artifacts|transfer strategy|rationale|enhancements)/i;
 
   // Returns entries found; does not touch state, so the caller can report and confirm.
@@ -1506,13 +1509,14 @@
       var t = lines[i].trim();
       if (!t) { if (cur) cur.body.push(""); continue; }
       // "Week 2 | Foundations of Wellness Awareness" — context for the entries under it.
-      var wk = /^week\s+(\d+)\s*\|\s*(.+)$/i.exec(t);
+      // "Week 2 | ..." and also "Week 1/ Team Week | ..."
+      var wk = /^week\s+(\d+)[^|]{0,40}\|\s*(.+)$/i.exec(t);
       if (wk) { weekCtx = "Week " + wk[1] + " · " + wk[2].trim(); continue; }
       var m = CODE_RE.exec(t);
       // A heading either says "Session" or carries a duration. Without that test a
       // sentence like "FULL 8-minute rehearsal and..." reads as code FULL8 and steals
       // the previous session's body.
-      if (m && (/^session\b/i.test(t) || MINS_RE.test(t))) {
+      if (m && (HEADING_RE.test(t) || MINS_RE.test(t))) {
         if (cur) found.push(cur);
         // A long session title wraps, carrying its "(60 min)" onto the next line.
         // Join it back before reading the title and duration.
