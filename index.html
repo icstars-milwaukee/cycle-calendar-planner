@@ -250,6 +250,11 @@
   /* The repeat affordance on a placed block. */
   /* Selected block: the target for Ctrl+C. */
   .blk.ws.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+  /* A hold occurrence skipped for one day of one week: a ghost, click to restore. */
+  .blk.skel.skipped {
+    opacity: 0.38; background: none !important;
+    border: 1.5px dashed var(--slot-line); text-decoration: line-through;
+  }
   /* ---- curriculum library ---- */
   .currbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .currbar input { flex: 1 1 auto; margin-bottom: 0; }
@@ -1041,6 +1046,8 @@
 
       <p class="rep-note" id="holdNote"></p>
       <div class="gate-row ev-actions">
+        <button type="button" id="holdSkipOnce"
+                title="Only this occurrence — the hold itself stays on every other day and week"></button>
         <button type="button" id="holdRemove" class="danger">× Remove this hold</button>
       </div>
       <div class="gate-row">
@@ -1242,9 +1249,21 @@
                  ics: h.ics || ("Hold: " + h.title), days: h.days, id: h.id };
       });
   }
+  // One-off exceptions: "holdId:week:day" keys name single skipped occurrences.
+  // The mapped hold is untouched; only that day of that week opens up.
+  function holdSkipKey(h, wk, d) { return (h.id || h.title || h.t) + ":" + wk + ":" + d; }
+  function holdSkips() {
+    if (!Array.isArray(state.holdSkips)) state.holdSkips = [];
+    return state.holdSkips;
+  }
+  function isHoldSkipped(h, wk, d) {
+    return holdSkips().indexOf(holdSkipKey(h, wk, d)) >= 0;
+  }
+
   function fixedFor(d) {
     if (skeletonFreeWeek()) return [];
-    return rawFixedFor(d);
+    // A skipped occurrence frees its slot: capacity, drops and resizes all see open time.
+    return rawFixedFor(d).filter(function (f) { return !isHoldSkipped(f, curWeek, d); });
   }
   function openOf(d) {
     var held = 0;
@@ -2101,9 +2120,18 @@
   // ---------- editing a business hold from the calendar ----------
   var holdBox = document.getElementById("holdBox");
   var holdTarget = null;
+  var holdTargetDay = null;   // which day column was clicked, for one-off skips
 
-  function openHoldEdit(h, anchor) {
+  function openHoldEdit(h, anchor, day) {
     holdTarget = h;
+    holdTargetDay = typeof day === "number" ? day : null;
+    var skipBtn = document.getElementById("holdSkipOnce");
+    if (holdTargetDay !== null && !skeletonFreeWeek()) {
+      skipBtn.hidden = false;
+      skipBtn.textContent = "Skip " + DAYS[holdTargetDay] + " of week " + curWeek + " only";
+    } else {
+      skipBtn.hidden = true;
+    }
     document.getElementById("holdWhat").textContent = "“" + h.title + "”";
     document.getElementById("holdName").value = h.title;
     document.getElementById("holdStart").value = minToTime(h.start);
@@ -2167,6 +2195,21 @@
     holdBox.hidden = true; holdTarget = null;
     save(); renderAll();
     icsSay("“" + name + "” updated across the cycle." +
+      (state.liveSync ? " The calendar follows in a few seconds." : ""));
+  });
+
+  document.getElementById("holdSkipOnce").addEventListener("click", function () {
+    var h = holdTarget;
+    if (!h || holdTargetDay === null) return;
+    if (!window.confirm("Skip “" + h.title + "” on " + DAYS[holdTargetDay] + " of week " + curWeek + " only?\n\n" +
+        "That one calendar event is removed on the next sync. Every other day and week keeps the hold, " +
+        "and the slot stays visible as a ghost so it can be restored with a click.")) return;
+    var day = holdTargetDay;
+    var key = holdSkipKey(h, curWeek, day);
+    if (holdSkips().indexOf(key) < 0) holdSkips().push(key);
+    holdBox.hidden = true; holdTarget = null; holdTargetDay = null;
+    save(); renderAll();
+    icsSay("“" + h.title + "” skipped on " + DAYS[day] + " of week " + curWeek + "." +
       (state.liveSync ? " The calendar follows in a few seconds." : ""));
   });
 
@@ -2654,17 +2697,33 @@
         el.className = "blk skel " + f.k;
         el.style.top = ((f.s - DAY_START) * PX) + "px";
         el.style.height = ((f.e - f.s) * PX - 2) + "px";
+        var skippedHere = isHoldSkipped(f, curWeek, d);
+        if (skippedHere) el.className += " skipped";
         if (f.k === "brk") el.textContent = f.t;
         else el.innerHTML = "<span class='t'>" + esc(f.t) + "</span><span class='d'>" + fmt(f.s) + " – " + fmt(f.e) + "</span>";
         // Holds are events too: clicking one edits it instead of sending people to
         // settings. The edit applies to the whole cycle, which the dialog says.
+        // A skipped occurrence stays visible as a ghost so it can be restored.
         if (f.id) {
           el.setAttribute("data-hold", f.id);
+          el.setAttribute("data-day", String(d));
           el.style.cursor = "pointer";
-          el.title = f.t + " · " + fmt(f.s) + " – " + fmt(f.e) + " — business hold, click to edit";
+          el.title = skippedHere
+            ? f.t + " — skipped on this day of week " + curWeek + ", click to restore"
+            : f.t + " · " + fmt(f.s) + " – " + fmt(f.e) + " — business hold, click to edit";
           el.addEventListener("click", function (ev) {
-            var h = boardHolds().filter(function (x) { return x.id === ev.currentTarget.getAttribute("data-hold"); })[0];
-            if (h) openHoldEdit(h, ev.currentTarget);
+            var id = ev.currentTarget.getAttribute("data-hold");
+            var day = +ev.currentTarget.getAttribute("data-day");
+            var h = boardHolds().filter(function (x) { return x.id === id; })[0];
+            if (!h) return;
+            if (isHoldSkipped(h, curWeek, day)) {
+              if (!window.confirm("Put “" + h.title + "” back on " + DAYS[day] + " of week " + curWeek + "?")) return;
+              state.holdSkips = holdSkips().filter(function (k) { return k !== holdSkipKey(h, curWeek, day); });
+              save(); renderAll();
+              icsSay("“" + h.title + "” is back on " + DAYS[day] + " of week " + curWeek + ".");
+              return;
+            }
+            openHoldEdit(h, ev.currentTarget, day);
           });
         }
         dayCols[d].appendChild(el);

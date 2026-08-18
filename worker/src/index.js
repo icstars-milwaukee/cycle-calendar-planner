@@ -294,12 +294,16 @@ function toEvents(plan, room) {
   // The fixed skeleton, unless someone has turned it off. Emitted per day so a holiday
   // that closes a day removes its rituals too, not just its workshops.
   if (plan.includeHolds !== false) {
+    // One-off exceptions: "holdId:week:day" keys name single occurrences someone has
+    // skipped. The mapped hold stays; only that occurrence's event disappears.
+    const holdSkips = new Set(Array.isArray(plan.holdSkips) ? plan.holdSkips : []);
     for (let w = 0; w < CYCLE_WEEKS; w++) {
       if (skipHolds.has(w + 1)) continue;
       for (let d = 0; d < 5; d++) {
         const date = addDaysISO(plan.weekOf, w * 7 + d);
         if (!date || blocked.has(date)) continue;
         for (const h of holdsForDay(plan, d)) {
+          if (holdSkips.has((h.id || slug(h.title)) + ":" + (w + 1) + ":" + d)) continue;
           // Default holds (ids h1-h8) keep the slug-of-title anchor their existing
           // calendar events were created under, so this change churns nothing.
           // Custom holds anchor to their unique id, so retiming or renaming one
@@ -730,6 +734,13 @@ function detectLoss(current, incoming) {
     const incIds = new Set((incoming.holds || []).map((h) => h.id));
     for (const h of current.holds) {
       if (!incIds.has(h.id)) return "the hold “" + h.title + "”";
+    }
+  }
+  // Skipping a hold occurrence removes one calendar event, so it is a deletion too.
+  {
+    const curSkips = new Set(Array.isArray(current.holdSkips) ? current.holdSkips : []);
+    for (const k of Array.isArray(incoming.holdSkips) ? incoming.holdSkips : []) {
+      if (!curSkips.has(k)) return "a hold occurrence (week " + (String(k).split(":")[1] || "?") + ")";
     }
   }
   const incCats = new Set((incoming.cats || []).map((c) => c.id));
