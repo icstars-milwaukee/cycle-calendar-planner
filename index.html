@@ -223,6 +223,8 @@
   }
   /* Non-admins never see delete controls; the server refuses them anyway. */
   .not-admin #notesRemove,
+  .not-admin #notesDelete,
+  .not-admin #holdSkipOnce,
   .not-admin #resetBtn,
   .not-admin .hold-row .del,
   .not-admin #catList .del,
@@ -1013,7 +1015,8 @@
       <div class="gate-row ev-actions">
         <button type="button" id="notesDup" title="Copy this event into the next free slot on its day">⎘ Duplicate</button>
         <button type="button" id="notesRep" title="Repeat across days and weeks">⧉ Repeat…</button>
-        <button type="button" id="notesRemove" class="danger" title="Send back to the shelf">× Remove</button>
+        <button type="button" id="notesRemove" title="Take it off the board but keep the workshop on the shelf to reuse">⇤ To shelf</button>
+        <button type="button" id="notesDelete" class="danger" title="Delete this event entirely — no shelf card">× Delete</button>
       </div>
       <div class="gate-row">
         <button type="submit" class="primary">Save for this event</button>
@@ -2426,12 +2429,26 @@
   document.getElementById("notesRemove").addEventListener("click", function () {
     var p = notesTarget;
     if (!p) return;
-    if (!window.confirm("Remove “" + p.title + "” from " + DAYS[p.day] + "?\n\n" +
-        "It goes back to the shelf, and its calendar event is removed on the next sync.")) return;
+    if (!window.confirm("Send “" + p.title + "” back to the shelf?\n\n" +
+        "Its calendar event is removed on the next sync; the workshop stays on the shelf to reuse.")) return;
     notesBox.hidden = true; notesTarget = null;
     ensureShelfCard(p);
     setPlaced(state.placed.filter(function (q) { return q.uid !== p.uid; }));
     save(); renderAll();
+  });
+  // Deleting is for one-offs: the event is simply gone -- no shelf card left behind.
+  document.getElementById("notesDelete").addEventListener("click", function () {
+    var p = notesTarget;
+    if (!p) return;
+    var series = seriesOf(p);
+    if (!window.confirm("Delete “" + p.title + "” from " + DAYS[p.day] + "?\n\n" +
+        "It does not go to the shelf. Its calendar event is removed on the next sync." +
+        (series.length > 1 ? "\nOnly this occurrence is deleted — the other " + (series.length - 1) +
+          " in the series stay." : ""))) return;
+    notesBox.hidden = true; notesTarget = null;
+    setPlaced(state.placed.filter(function (q) { return q.uid !== p.uid; }));
+    save(); renderAll();
+    icsSay("“" + p.title + "” deleted." + (state.liveSync ? " The calendar follows in a few seconds." : ""));
   });
 
   // ---------- repeating a workshop ----------
