@@ -302,6 +302,10 @@ function toEvents(plan, room) {
     const holdSkips = new Set(Array.isArray(plan.holdSkips) ? plan.holdSkips : []);
     // Per-occurrence details, same keying: an override wins over the hold's own notes.
     const holdNotes = plan.holdNotes && typeof plan.holdNotes === "object" ? plan.holdNotes : {};
+    // Per-occurrence titles, same keying again: "Lunch" can be "Pizza Friday" on one
+    // day. The uid stays anchored to the hold itself, so a renamed occurrence updates
+    // its existing calendar event in place instead of duplicating it.
+    const holdTitles = plan.holdTitles && typeof plan.holdTitles === "object" ? plan.holdTitles : {};
     for (let w = 0; w < CYCLE_WEEKS; w++) {
       if (skipHolds.has(w + 1)) continue;
       for (let d = 0; d < 5; d++) {
@@ -314,9 +318,11 @@ function toEvents(plan, room) {
           // Custom holds anchor to their unique id, so retiming or renaming one
           // updates its events in place rather than duplicating.
           const anchor = (!h.id || /^h\d$/.test(h.id)) ? slug(h.title) : h.id;
+          const titleOv = holdTitles[(h.id || slug(h.title)) + ":" + (w + 1) + ":" + d];
           events.push({
             uid: prefix + "hold-" + anchor + "-w" + (w + 1) + "-d" + d,
-            subject: h.title,
+            subject: (typeof titleOv === "string" && titleOv.trim())
+              ? titleOv.trim().slice(0, 120) : h.title,
             category: "Fixed hold",
             start: { dateTime: date + "T" + hhmm(h.start), timeZone: CAL_TZ },
             end: { dateTime: date + "T" + hhmm(h.end), timeZone: CAL_TZ },
