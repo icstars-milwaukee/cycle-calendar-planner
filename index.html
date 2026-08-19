@@ -4209,7 +4209,10 @@
     // Title
     g.fillStyle = "#23241F";
     g.font = "700 22px Segoe UI, Arial, sans-serif";
-    var mon = mondayOfWeek(curWeek);
+    // mondayOfWeek returns an ISO string (or null before a start date is set).
+    var monIso = mondayOfWeek(curWeek);
+    var mp = monIso ? monIso.split("-") : null;
+    var mon = mp ? new Date(+mp[0], +mp[1] - 1, +mp[2]) : new Date();
     var fri = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 4);
     var dspan = (mon.getMonth() + 1) + "/" + mon.getDate() + " – " + (fri.getMonth() + 1) + "/" + fri.getDate();
     g.fillText("Week " + curWeek + " of 14 · " + dspan, 12, 30);
