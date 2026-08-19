@@ -10,6 +10,9 @@
  */
 
 const ALLOWED_ORIGINS = [
+  // The planner's home since it joined the hub. The old GitHub Pages origin
+  // stays allowed so anyone on a cached copy of the page keeps syncing.
+  "https://icstars-tech-inventory.pages.dev",
   "https://icstars-milwaukee.github.io",
   "http://localhost:8000",
   "http://127.0.0.1:8000",
