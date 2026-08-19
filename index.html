@@ -171,10 +171,30 @@
     font-size: 13px; font-weight: 800; letter-spacing: 0.02em; color: var(--moss);
     margin-right: 6px; white-space: nowrap;
   }
-  .tools.help > summary {
+  .tut-open {
     width: 32px; text-align: center; padding: 8px 0; font-weight: 800; color: var(--ink-soft);
+    border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer;
   }
-  .tools.help .tools-body { width: 340px; }
+  .tut-open:hover { color: var(--ink); }
+  /* Tutorial */
+  .tut-card { max-width: 560px; max-height: 88vh; overflow-y: auto; }
+  .tut-chapters { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 14px; }
+  .tut-chapters button {
+    padding: 4px 9px; font-size: 11px; border-radius: 20px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft); cursor: pointer;
+  }
+  .tut-chapters button.on { background: var(--moss); border-color: var(--moss); color: #fff; font-weight: 700; }
+  .tut-step { display: flex; gap: 12px; margin: 0 0 14px; }
+  .tut-num {
+    flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--moss);
+    color: #fff; font-weight: 800; font-size: 13px; display: flex; align-items: center;
+    justify-content: center; margin-top: 1px;
+  }
+  .tut-step b { display: block; font-size: 13.5px; margin-bottom: 3px; }
+  .tut-step ul { margin: 4px 0 0 16px; padding: 0; }
+  .tut-step li { font-size: 12px; color: var(--ink-soft); line-height: 1.55; margin: 2px 0; }
+  .tut-row { align-items: center; }
+  .tut-pos { flex: 1; text-align: center; font-size: 11.5px; color: var(--ink-soft); }
   .live-toggle {
     display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
     font-size: 12.5px; font-weight: 600; padding: 8px 12px; border-radius: 6px;
@@ -855,21 +875,28 @@
         </div>
       </details>
 
-      <details class="tools help">
-        <summary aria-label="Help">?</summary>
-        <div class="tools-body">
-          <p class="tools-note">Drag a card from <b>Workshops</b> onto any day. Drag placed blocks to move
-          them, pull the bottom edge to resize, ✎ for details and format, ⧉ to repeat, × to send back.
-          Red means it collides with the skeleton or another workshop.</p>
-          <p class="tools-note">Navigate the 14 weeks with the arrows. Your layout autosaves and syncs to
-          the whole team; <b>Publish to calendar</b> (or Live sync) sends it to the group calendar.
-          The two shaded bars down each day mark who is on shift.</p>
-        </div>
-      </details>
+      <button id="tutBtn" class="tut-open" type="button" aria-label="Open the tutorial"
+              title="How this planner works — a short guided tour">?</button>
 
       <span id="icsMsg" class="ics-msg" role="status"></span>
     </div>
   </header>
+
+  <!-- Guided tour. Each chapter is at most three strong steps; a step may carry a few
+       substeps. Opens on its own for first-time users, and from the ? any time. -->
+  <div class="gate" id="tutBox" hidden>
+    <div class="gate-card tut-card">
+      <div class="tut-chapters" id="tutChapters"></div>
+      <h2 id="tutTitle"></h2>
+      <div id="tutBody"></div>
+      <div class="gate-row tut-row">
+        <button type="button" id="tutPrev">◀ Back</button>
+        <span class="tut-pos" id="tutPos"></span>
+        <button type="button" id="tutNext" class="primary">Next ▶</button>
+        <button type="button" id="tutClose">Close</button>
+      </div>
+    </div>
+  </div>
 
   <div class="gate" id="gate" hidden>
     <form class="gate-card" id="gateForm">
@@ -3205,7 +3232,7 @@
     legendEl.innerHTML = html;
   }
 
-  function renderAll() { closeCatMenu(); renderHolds(); renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); renderHoldsEditor(); renderPeerCursors(); renderCurr(); }
+  function renderAll() { closeCatMenu(); renderHolds(); renderPlaced(); renderShelf(); renderStats(); renderCats(); renderLegend(); renderCycle(); renderWeekBar(); renderDayDates(); renderGroupPick(); renderHoldsEditor(); renderPeerCursors(); renderCurr(); maybeFirstTour(); }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -3290,6 +3317,154 @@
       renderWho();
       schedulePcSweep();
     }, 3000);
+  }
+
+  // ---------- tutorial ----------
+  // Every chapter is at most three strong steps; a step carries at most five
+  // substeps. Opens on its own the first time someone uses the shared board.
+  var TUTORIAL = [
+    { name: "Join", title: "Join your cycle", steps: [
+      ["Sign in", ["Enter your work email and the team password.",
+        "Every change you make is recorded under that email.",
+        "“Work offline” keeps the board in this browser only."]],
+      ["Pick your cycle", ["Choose it from the list — each cycle has its own board and its own Microsoft 365 group.",
+        "Creating a cycle is one-time: name it, set its first Monday, tie its group."]],
+      ["You're in", ["The green pill shows who else is here right now.",
+        "Colored chips are your teammates — a pulsing chip is someone mid-drag, and you'll see their ghost block move on the grid."]],
+    ]},
+    { name: "The board", title: "Read the board", steps: [
+      ["One week at a time", ["Columns are Monday to Friday, 8:30 AM to 7:15 PM.",
+        "Move between the 14 weeks with the ◀ ▶ arrows or the week picker.",
+        "Wednesday and Friday are tinted: they run virtual from week 3."]],
+      ["What the blocks are", ["Gray blocks are business holds — All Skate, tea service, lunch.",
+        "Colored blocks are workshops; the color is their category.",
+        "Red means two things collide — events can never stack."]],
+      ["See it your way", ["− / Fit / + in the week bar zooms; Ctrl+scroll zooms around your cursor.",
+        "Fit shows the whole day at once.",
+        "Zoom is only your view — it changes nothing for anyone else."]],
+    ]},
+    { name: "Add", title: "Put a workshop on the board", steps: [
+      ["Make its card", ["Open the Workshops tab, name it, pick a category and a length, Add to shelf."]],
+      ["Drag it on", ["Drag the card onto a day at the time you want.",
+        "The preview turns red where it can't go — over a hold, or on top of another event.",
+        "Removed events go back to the shelf, ready to reuse."]],
+      ["Fine-tune", ["Drag a block to move it; pull its bottom edge to resize.",
+        "⎘ duplicates into the next free slot; Ctrl+C / Ctrl+V copies across weeks.",
+        "↶ Undo (Ctrl+Z) walks back your recent changes."]],
+    ]},
+    { name: "Edit", title: "Edit any event", steps: [
+      ["Click it", ["Everything lives in one popup: title, curriculum, details, format, category, facilitator, time.",
+        "Business holds open their own editor the same way."]],
+      ["Change what you need", ["Times are to the minute; format switches Teams link vs in person.",
+        "Every save asks are-you-sure and says exactly what will change.",
+        "Nothing reaches the real calendar until Publish."]],
+      ["One or all", ["A repeating workshop offers “Save for all N in this series”.",
+        "“To shelf” keeps the workshop for reuse; “Delete” removes just that event.",
+        "Deleting one occurrence never touches the rest of the series."]],
+    ]},
+    { name: "Curriculum", title: "Curriculum codes & facilitators", steps: [
+      ["The code library", ["The Curriculum tab lists every session code (W2A, BW3B, LW4A, T2A…).",
+        "Search by code or title.",
+        "Paste a curriculum PDF's text there to add or update codes."]],
+      ["Map an event", ["In the event's editor, pick its code — the details pull in, formatted and still editable.",
+        "If the code's length differs, a button offers to match it — your time is never changed silently."]],
+      ["Assign the facilitator", ["Type their email in the Facilitator field (two work, comma-separated).",
+        "They're invited on the calendar event, so it lands on their own calendar.",
+        "The sidebar totals each facilitator's hours and flags time nobody owns."]],
+    ]},
+    { name: "Holds", title: "Business holds", steps: [
+      ["Edit the hold", ["Click any gray hold: name, time, days, details.",
+        "Saving applies to every week of the cycle — the dialog says so."]],
+      ["One-off exceptions", ["“Skip <day> of week <n> only” removes a single occurrence.",
+        "The slot stays visible as a crossed-out ghost — click it to restore.",
+        "“Details for <day> only” gives one occurrence its own description."]],
+      ["Skeleton-free weeks", ["Team Week runs without the skeleton entirely — a blank canvas with one banner."]],
+    ]},
+    { name: "Publish", title: "Publish to the group calendar", steps: [
+      ["Draft first", ["Everything you do is a draft the whole team sees live.",
+        "The pill counts changes not yet on the calendar."]],
+      ["Press Publish", ["Publish to calendar sends the board to the Cycle21-MKE group calendar.",
+        "Live sync publishes automatically a few seconds after each edit.",
+        "The History tab logs every change and every sync job's result."]],
+      ["It heals itself", ["A guard re-checks the calendar every minute.",
+        "Anything deleted or changed in Outlook is put back automatically.",
+        "Only admins can delete; snapshots back up every board."]],
+    ]},
+    { name: "Copy & export", title: "Copy weeks, export, share", steps: [
+      ["Copy a week", ["“Copy this week to…” copies the week on screen into any weeks you tick.",
+        "Weeks that already have work are flagged before they're replaced."]],
+      ["Export", ["More ▾ → Export cycle .ics: all 14 weeks, exactly as they sync.",
+        "Export image: a clean PNG of the week for decks and chat.",
+        "Export week .ics + Import .ics round-trip a single week."]],
+      ["Stay safe", ["Backups run on every publish and every destructive action.",
+        "Ask an admin to restore any earlier snapshot."]],
+    ]},
+  ];
+
+  var tutBox = document.getElementById("tutBox");
+  var tutAt = 0;
+  var tutOpened = false;
+
+  function renderTut() {
+    var ch = TUTORIAL[tutAt];
+    document.getElementById("tutTitle").textContent = ch.title;
+    var chips = document.getElementById("tutChapters");
+    chips.innerHTML = "";
+    TUTORIAL.forEach(function (c, i) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = c.name;
+      b.className = i === tutAt ? "on" : "";
+      b.addEventListener("click", function () { tutAt = i; renderTut(); });
+      chips.appendChild(b);
+    });
+    var body = document.getElementById("tutBody");
+    body.innerHTML = "";
+    ch.steps.forEach(function (st, i) {
+      var el = document.createElement("div");
+      el.className = "tut-step";
+      var sub = st[1].map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("");
+      el.innerHTML = "<span class='tut-num'>" + (i + 1) + "</span>" +
+        "<div><b>" + esc(st[0]) + "</b><ul>" + sub + "</ul></div>";
+      body.appendChild(el);
+    });
+    document.getElementById("tutPrev").disabled = tutAt === 0;
+    document.getElementById("tutNext").textContent = tutAt === TUTORIAL.length - 1 ? "Done ✓" : "Next ▶";
+    document.getElementById("tutPos").textContent = (tutAt + 1) + " of " + TUTORIAL.length;
+  }
+  function openTutorial(fromStart) {
+    if (fromStart) tutAt = 0;
+    tutOpened = true;
+    renderTut();
+    tutBox.hidden = false;
+  }
+  function closeTutorial() {
+    tutBox.hidden = true;
+    try { localStorage.setItem("tf-tut-seen", "1"); } catch (e) {}
+  }
+  document.getElementById("tutBtn").addEventListener("click", function () { openTutorial(true); });
+  document.getElementById("tutClose").addEventListener("click", closeTutorial);
+  document.getElementById("tutPrev").addEventListener("click", function () {
+    if (tutAt > 0) { tutAt--; renderTut(); }
+  });
+  document.getElementById("tutNext").addEventListener("click", function () {
+    if (tutAt >= TUTORIAL.length - 1) { closeTutorial(); return; }
+    tutAt++; renderTut();
+  });
+  tutBox.addEventListener("pointerdown", function (e) { if (e.target === tutBox) closeTutorial(); });
+
+  // First-timers get the tour on their own: once the shared board is up and no other
+  // dialog is in the way. renderAll runs on every state change, so check there.
+  function maybeFirstTour() {
+    if (tutOpened) return;
+    var seen = null;
+    try { seen = localStorage.getItem("tf-tut-seen"); } catch (e) { seen = "1"; }
+    if (seen) { tutOpened = true; return; }
+    if (/(\?|&)sync=off\b/.test(location.search)) return;   // offline/test boards skip it
+    var gate = document.getElementById("gate");
+    var chooser = document.getElementById("chooser");
+    if ((gate && !gate.hidden) || (chooser && !chooser.hidden)) return;
+    openTutorial(true);
   }
 
   // ---------- select, copy, paste, duplicate ----------
@@ -5624,6 +5799,7 @@
       return;
     }
     if (e.key === "Escape") {
+      if (tutBox && !tutBox.hidden) { closeTutorial(); return; }
       var nb = document.getElementById("notesBox");
       if (nb && !nb.hidden) { nb.hidden = true; notesTarget = null; return; }
       if (selUid) selectBlock(selUid);   // toggles the selection off
