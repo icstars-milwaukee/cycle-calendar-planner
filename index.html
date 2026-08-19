@@ -823,7 +823,9 @@
                    maxlength="70" placeholder="cycle21-week" />
           </label>
           <label class="holds-opt"><input type="checkbox" id="icsHolds" checked /> include holds</label>
-          <button id="icsBtn" type="button">Export .ics</button>
+          <button id="icsBtn" type="button">Export week .ics</button>
+          <button id="icsAllBtn" type="button" title="Every event of all 14 weeks, exactly as the calendar sync sees them">Export cycle .ics</button>
+          <button id="pngBtn" type="button" title="A picture of the week on screen, ready to drop into a deck or chat">Export image</button>
           <button id="importBtn" type="button">Import .ics</button>
           <input type="file" id="icsFile" accept=".ics,text/calendar,text/plain" hidden />
           <button id="exportBtn" type="button">Copy schedule as text</button>
@@ -4121,6 +4123,209 @@
     }
   });
 
+  // ---------- whole-cycle .ics ----------
+  // Exports every event of all 14 weeks from the worker's own projection -- the same
+  // one the calendar sync consumes -- so holds, one-off skips, holidays, banners and
+  // Teams flags all come out exactly as they land on the Group calendar.
+  var cycleEventsUrl = null;   // set by the sync layer once connected
+
+  function saveTextFile(text, filename, mime, doneMsg) {
+    var blob = new Blob([text], { type: mime });
+    var u = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = u;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(u); }, 4000);
+    if (doneMsg) icsSay(doneMsg);
+  }
+
+  document.getElementById("icsAllBtn").addEventListener("click", function () {
+    if (!cycleEventsUrl) {
+      icsSay("The whole-cycle export needs the shared board — you're offline. The week export still works.", true);
+      return;
+    }
+    icsSay("Building the cycle…");
+    fetch(cycleEventsUrl)
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok || !j.events) { icsSay(j.error || "The board has no week set yet.", true); return; }
+        var stamp = icsStamp(new Date());
+        var lines = ["BEGIN:VCALENDAR", "VERSION:2.0",
+          "PRODID:-//Tech Foundations//Cycle Planner//EN", "CALSCALE:GREGORIAN"];
+        j.events.forEach(function (ev) {
+          var s = ev.start.dateTime.replace(/[-:]/g, "");
+          var e = ev.end.dateTime.replace(/[-:]/g, "");
+          lines.push("BEGIN:VEVENT");
+          lines.push("UID:" + ev.uid + "@cycleplanner");
+          lines.push("DTSTAMP:" + stamp);
+          if (ev.isAllDay) {
+            lines.push("DTSTART;VALUE=DATE:" + s.slice(0, 8));
+            lines.push("DTEND;VALUE=DATE:" + e.slice(0, 8));
+          } else {
+            lines.push("DTSTART:" + s);
+            lines.push("DTEND:" + e);
+          }
+          lines.push("SUMMARY:" + icsEsc(ev.subject));
+          if (ev.category) lines.push("CATEGORIES:" + icsEsc(ev.category));
+          lines.push("LOCATION:" + icsEsc(ev.teams ? "Virtual (Teams)" : "In person"));
+          var desc = (ev.notes ? ev.notes + "\n" : "") +
+            (ev.week ? "Week " + ev.week + " of 14" : "") +
+            ((ev.who || []).length ? "\nFacilitator: " + ev.who.join(", ") : "");
+          if (desc.trim()) lines.push("DESCRIPTION:" + icsEsc(desc.trim()));
+          lines.push("END:VEVENT");
+        });
+        lines.push("END:VCALENDAR");
+        var name = (exportName() || "cycle").replace(/-week.*$/, "") + "-full-cycle";
+        saveTextFile(lines.join("\r\n"), name + ".ics", "text/calendar;charset=utf-8",
+          "Downloaded " + name + ".ics — " + j.events.length + " events, all 14 weeks.");
+      })
+      .catch(function () { icsSay("Could not reach the shared board.", true); });
+  });
+
+  // ---------- image export ----------
+  // Draws the week on screen to a PNG: cleaner than a screenshot, and it works no
+  // matter the window size or zoom.
+  document.getElementById("pngBtn").addEventListener("click", function () {
+    var SC = 2;                       // 2x for crispness
+    var colW = 290, gap = 14, railW = 56, headH = 96, footH = 46;
+    var pxm = 1.35;                   // pixels per minute in the image
+    var W = railW + 5 * colW + 4 * gap + 24;
+    var H = headH + (DAY_END - DAY_START) * pxm + footH;
+    var cv = document.createElement("canvas");
+    cv.width = W * SC; cv.height = H * SC;
+    var g = cv.getContext && cv.getContext("2d");
+    if (!g) { icsSay("This browser can't draw the image. The .ics exports still work.", true); return; }
+    g.scale(SC, SC);
+    var y0 = headH;
+    var Y = function (min) { return y0 + (min - DAY_START) * pxm; };
+    var X = function (d) { return railW + 12 + d * (colW + gap); };
+
+    g.fillStyle = "#FBFAF7";
+    g.fillRect(0, 0, W, H);
+
+    // Title
+    g.fillStyle = "#23241F";
+    g.font = "700 22px Segoe UI, Arial, sans-serif";
+    var mon = mondayOfWeek(curWeek);
+    var fri = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 4);
+    var dspan = (mon.getMonth() + 1) + "/" + mon.getDate() + " – " + (fri.getMonth() + 1) + "/" + fri.getDate();
+    g.fillText("Week " + curWeek + " of 14 · " + dspan, 12, 30);
+    g.font = "12px Segoe UI, Arial, sans-serif";
+    g.fillStyle = "#6E6A5E";
+    g.fillText("Cycle Calendar Planner", 12, 48);
+    var banner = (state.weekEvents || []).filter(function (we) { return we.week === curWeek; })[0];
+    if (banner) {
+      g.fillStyle = "#3E7A6E";
+      g.font = "700 13px Segoe UI, Arial, sans-serif";
+      g.fillText("◼ " + banner.title, 12, 66);
+    }
+
+    // Hour rail + lines
+    g.font = "10.5px Segoe UI, Arial, sans-serif";
+    g.textAlign = "right";
+    for (var hh = 9; hh <= 19; hh++) {
+      var yy = Y(hh * 60);
+      g.strokeStyle = "#E5E2D9";
+      g.beginPath(); g.moveTo(railW, yy); g.lineTo(W - 12, yy); g.stroke();
+      g.fillStyle = "#8A8578";
+      g.fillText(fmt(hh * 60), railW - 6, yy + 3.5);
+    }
+    g.textAlign = "left";
+
+    for (var d = 0; d < 5; d++) {
+      var x = X(d);
+      var dt = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + d);
+      g.fillStyle = "#23241F";
+      g.font = "700 14px Segoe UI, Arial, sans-serif";
+      g.fillText(DAYS[d], x, headH - 22);
+      g.fillStyle = "#8A8578";
+      g.font = "11px Segoe UI, Arial, sans-serif";
+      g.fillText((dt.getMonth() + 1) + "/" + dt.getDate() +
+        (skeletonFreeWeek() ? "" : " · " + MODE_LABEL[DAY_MODE[d]]), x + 68, headH - 22);
+      g.strokeStyle = "#D9D5CA";
+      g.strokeRect(x, y0, colW, (DAY_END - DAY_START) * pxm);
+
+      // Holds (skipped occurrences drawn hollow)
+      rawFixedFor(d).forEach(function (f) {
+        if (skeletonFreeWeek()) return;
+        var skip = isHoldSkipped(f, curWeek, d);
+        var hy = Y(f.s), hh2 = (f.e - f.s) * pxm;
+        if (skip) {
+          g.strokeStyle = "#B9B4A6";
+          g.setLineDash([4, 3]);
+          g.strokeRect(x + 2, hy + 1, colW - 4, hh2 - 2);
+          g.setLineDash([]);
+        } else {
+          g.fillStyle = "#EEECE4";
+          g.fillRect(x + 2, hy + 1, colW - 4, hh2 - 2);
+          g.fillStyle = "#8A8578";
+          g.font = "10px Segoe UI, Arial, sans-serif";
+          if (hh2 > 12) g.fillText(f.t, x + 8, hy + Math.min(hh2 - 3, 13));
+        }
+      });
+
+      // Workshops
+      state.placed.filter(function (p) { return p.day === d; }).forEach(function (p) {
+        var py = Y(p.start), ph = p.mins * pxm;
+        var paint = catPaint(catOf(p));
+        g.fillStyle = paint.soft && paint.soft.indexOf("var(") < 0 ? paint.soft : "#EDEDF4";
+        g.fillRect(x + 2, py + 1, colW - 4, ph - 2);
+        g.fillStyle = paint.color && paint.color.indexOf("var(") < 0 ? paint.color : "#4A6B8A";
+        g.fillRect(x + 2, py + 1, 4, ph - 2);
+        g.save();
+        g.beginPath(); g.rect(x + 8, py, colW - 14, ph); g.clip();
+        g.fillStyle = "#23241F";
+        g.font = "700 11.5px Segoe UI, Arial, sans-serif";
+        g.fillText(p.title, x + 10, py + 13);
+        if (ph > 26) {
+          g.fillStyle = "#6E6A5E";
+          g.font = "10.5px Segoe UI, Arial, sans-serif";
+          g.fillText(fmt(p.start) + " – " + fmt(p.start + p.mins) +
+            (effectiveTeams(p, curWeek) ? " · Teams" : "") +
+            (p.code ? " · " + p.code : ""), x + 10, py + 26);
+        }
+        if (ph > 39) {
+          var pw2 = whoOf(p);
+          if (pw2.length) {
+            g.fillStyle = "#6E6A5E";
+            g.font = "10px Segoe UI, Arial, sans-serif";
+            g.fillText(whoLabel(pw2), x + 10, py + 38);
+          }
+        }
+        g.restore();
+      });
+    }
+
+    // Legend of the categories in use this week
+    var used = {};
+    state.placed.forEach(function (p) { used[catOf(p)] = 1; });
+    var lx = 12, ly = H - footH + 22;
+    g.font = "10.5px Segoe UI, Arial, sans-serif";
+    Object.keys(used).forEach(function (id) {
+      var c = catById(id);
+      if (!c || lx > W - 150) return;
+      g.fillStyle = c.color && c.color.indexOf("var(") < 0 ? c.color : "#4A6B8A";
+      g.fillRect(lx, ly - 8, 9, 9);
+      g.fillStyle = "#6E6A5E";
+      g.fillText(c.name, lx + 13, ly);
+      lx += 22 + g.measureText(c.name).width;
+    });
+
+    var fname = (exportName() || "cycle") + "-map.png";
+    cv.toBlob(function (blob) {
+      if (!blob) { icsSay("Could not build the image in this browser.", true); return; }
+      var u = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = u; a.download = fname;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(u); }, 4000);
+      icsSay("Downloaded " + fname + " — a picture of week " + curWeek + ".");
+    }, "image/png");
+  });
+
   // ---------- ics import ----------
   var IMPORT_PALETTE = ["#7A5C9E", "#2F7D6B", "#B0713A", "#4A6B8A", "#96504B", "#5B6B4F", "#8A5A6B"];
 
@@ -5163,6 +5368,8 @@
     function connect() {
       if (closed) return;
       syncStatus("wait", "Connecting…", "Connecting to the shared board.");
+      // The whole-cycle export reads the worker's projection for this room.
+      cycleEventsUrl = SYNC_URL + "/room/" + encodeURIComponent(room) + "/events?pw=" + encodeURIComponent(pw);
       try { ws = new WebSocket(url()); } catch (e) { return retry(); }
 
       ws.onopen = function () { tries = 0; };
