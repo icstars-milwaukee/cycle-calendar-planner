@@ -1030,7 +1030,7 @@
 
   <!-- Business holds are editable from the calendar itself, not only from settings. -->
   <div class="gate" id="holdBox" hidden>
-    <form class="gate-card" id="holdForm">
+    <form class="gate-card" id="holdEditForm">
       <h2>Edit <span id="holdWhat"></span></h2>
       <p class="rep-note">A business hold repeats every week of the cycle, so a change here
         changes it on every week.</p>
@@ -1049,6 +1049,11 @@
       <div class="rep-label">Days</div>
       <div class="rep-days" id="holdDayPick"></div>
 
+      <div class="rep-label">Details <span class="rep-hint">— appear in the calendar event's description</span></div>
+      <textarea id="holdText" rows="4" maxlength="4000"
+                placeholder="Agenda, prep, links — anything the team should see on this hold."></textarea>
+      <p class="rep-note" id="holdTextNote"></p>
+
       <p class="rep-note" id="holdNote"></p>
       <div class="gate-row ev-actions">
         <button type="button" id="holdSkipOnce"
@@ -1057,6 +1062,7 @@
       </div>
       <div class="gate-row">
         <button type="submit" class="primary">Save for the cycle</button>
+        <button type="button" id="holdSaveOnce" title="Only the details, only this occurrence"></button>
         <button type="button" id="holdCancel">Cancel</button>
       </div>
     </form>
@@ -2127,16 +2133,32 @@
   var holdTarget = null;
   var holdTargetDay = null;   // which day column was clicked, for one-off skips
 
+  // Per-occurrence detail overrides live under the same id:week:day keys the skips use.
+  function holdNoteMap() {
+    if (!state.holdNotes || typeof state.holdNotes !== "object") state.holdNotes = {};
+    return state.holdNotes;
+  }
+
   function openHoldEdit(h, anchor, day) {
     holdTarget = h;
     holdTargetDay = typeof day === "number" ? day : null;
     var skipBtn = document.getElementById("holdSkipOnce");
+    var onceBtn = document.getElementById("holdSaveOnce");
     if (holdTargetDay !== null && !skeletonFreeWeek()) {
       skipBtn.hidden = false;
       skipBtn.textContent = "Skip " + DAYS[holdTargetDay] + " of week " + curWeek + " only";
+      onceBtn.hidden = false;
+      onceBtn.textContent = "Details for " + DOWS3[holdTargetDay] + " wk" + curWeek + " only";
     } else {
       skipBtn.hidden = true;
+      onceBtn.hidden = true;
     }
+    var okey = holdTargetDay !== null ? holdSkipKey(h, curWeek, holdTargetDay) : null;
+    var hasOv = okey !== null && Object.prototype.hasOwnProperty.call(holdNoteMap(), okey);
+    document.getElementById("holdText").value = hasOv ? holdNoteMap()[okey] : (h.notes || "");
+    document.getElementById("holdTextNote").textContent = hasOv
+      ? "This day has its own details. Saving for the cycle keeps them; clear the box and save for this day to fall back."
+      : "";
     document.getElementById("holdWhat").textContent = "“" + h.title + "”";
     document.getElementById("holdName").value = h.title;
     document.getElementById("holdStart").value = minToTime(h.start);
@@ -2174,7 +2196,7 @@
   document.getElementById("holdStart").addEventListener("input", updHoldDur);
   document.getElementById("holdEnd").addEventListener("input", updHoldDur);
 
-  document.getElementById("holdForm").addEventListener("submit", function (ev) {
+  document.getElementById("holdEditForm").addEventListener("submit", function (ev) {
     ev.preventDefault();
     var h = holdTarget;
     if (!h) return;
@@ -2183,6 +2205,7 @@
     var e = timeToMin(document.getElementById("holdEnd").value);
     var days = [].slice.call(document.querySelectorAll("#holdDayPick input:checked"))
       .map(function (c) { return +c.value; });
+    var text = document.getElementById("holdText").value.trim();
     if (!name) { window.alert("The hold needs a name."); return; }
     if (s === null || e === null || e <= s || s < DAY_START || e > DAY_END) {
       window.alert("Times must fall between 8:30 AM and 7:15 PM, and end after they start.");
@@ -2192,14 +2215,42 @@
     var moved = s !== h.start || e !== h.end;
     var renamed = name !== h.title;
     var dayChange = days.join(",") !== holdDays(h).join(",");
-    if (!moved && !renamed && !dayChange) { holdBox.hidden = true; holdTarget = null; return; }
+    var notesChange = text !== (h.notes || "");
+    if (!moved && !renamed && !dayChange && !notesChange) { holdBox.hidden = true; holdTarget = null; return; }
     if (!window.confirm("Save “" + name + "”" + (moved ? " at " + fmt(s) + " – " + fmt(e) : "") +
         (dayChange ? " on " + days.map(function (d) { return DOWS3[d]; }).join(", ") : "") +
-        " for every week of the cycle?")) return;
+        (notesChange ? (moved || dayChange ? " and" : "") + " the details" : "") +
+        " for every week of the cycle?" +
+        (notesChange ? "\n\nDays that have their own details keep them." : ""))) return;
     h.title = name; h.start = s; h.end = e; h.days = days;
+    if (text) h.notes = text; else delete h.notes;
     holdBox.hidden = true; holdTarget = null;
     save(); renderAll();
     icsSay("“" + name + "” updated across the cycle." +
+      (state.liveSync ? " The calendar follows in a few seconds." : ""));
+  });
+
+  // Details for one occurrence only: an override keyed to this hold, week and day.
+  document.getElementById("holdSaveOnce").addEventListener("click", function () {
+    var h = holdTarget;
+    if (!h || holdTargetDay === null) return;
+    var day = holdTargetDay;
+    var text = document.getElementById("holdText").value.trim();
+    var okey = holdSkipKey(h, curWeek, day);
+    var hasOv = Object.prototype.hasOwnProperty.call(holdNoteMap(), okey);
+    if (!text && !hasOv && !(h.notes || "")) { holdBox.hidden = true; holdTarget = null; holdTargetDay = null; return; }
+    if (!text && hasOv) {
+      if (!window.confirm("Drop this day's custom details? " + DAYS[day] + " of week " + curWeek +
+          " goes back to the hold's own details.")) return;
+      delete holdNoteMap()[okey];
+    } else {
+      if (!window.confirm("Save these details for " + DAYS[day] + " of week " + curWeek + " only?\n\n" +
+          "Every other day and week keeps the hold's own details.")) return;
+      holdNoteMap()[okey] = text;
+    }
+    holdBox.hidden = true; holdTarget = null; holdTargetDay = null;
+    save(); renderAll();
+    icsSay("Details saved for " + DAYS[day] + " of week " + curWeek + " only." +
       (state.liveSync ? " The calendar follows in a few seconds." : ""));
   });
 

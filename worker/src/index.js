@@ -297,6 +297,8 @@ function toEvents(plan, room) {
     // One-off exceptions: "holdId:week:day" keys name single occurrences someone has
     // skipped. The mapped hold stays; only that occurrence's event disappears.
     const holdSkips = new Set(Array.isArray(plan.holdSkips) ? plan.holdSkips : []);
+    // Per-occurrence details, same keying: an override wins over the hold's own notes.
+    const holdNotes = plan.holdNotes && typeof plan.holdNotes === "object" ? plan.holdNotes : {};
     for (let w = 0; w < CYCLE_WEEKS; w++) {
       if (skipHolds.has(w + 1)) continue;
       for (let d = 0; d < 5; d++) {
@@ -319,6 +321,11 @@ function toEvents(plan, room) {
             day: d,
             minutes: h.end - h.start,
             isHold: true,
+            notes: (() => {
+              const ov = holdNotes[(h.id || slug(h.title)) + ":" + (w + 1) + ":" + d];
+              const t = typeof ov === "string" ? ov : (typeof h.notes === "string" ? h.notes : "");
+              return t.slice(0, 4000);
+            })(),
           });
         }
       }
