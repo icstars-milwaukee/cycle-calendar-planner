@@ -341,6 +341,28 @@ function toEvents(plan, room) {
     }
   }
 
+  // Every program day carries a banner: the week number and whether the day
+  // is in person or virtual. All-day events pin to the top of the day in
+  // Outlook, so the hybrid schedule is the first thing on every date - the
+  // person who shows up on a virtual day at least did it against a labeled
+  // calendar. Same rule the per-event Teams flag uses: Wed/Fri are virtual
+  // from week 3, and skeleton-free (team) weeks are all in person.
+  for (let w = 0; w < CYCLE_WEEKS; w++) {
+    for (let d = 0; d < 5; d++) {
+      const date = addDaysISO(plan.weekOf, w * 7 + d);
+      if (!date || blocked.has(date)) continue;
+      const virtual = (w + 1) >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(d) >= 0 && !skipHolds.has(w + 1);
+      events.push({
+        uid: prefix + "daymode-w" + (w + 1) + "-d" + d,
+        subject: "Week " + (w + 1) + " · " + (virtual ? "Virtual Day" : "In-Person Day"),
+        category: "Schedule",
+        isAllDay: true,
+        start: { dateTime: date + "T00:00:00", timeZone: CAL_TZ },
+        end: { dateTime: addDaysISO(date, 1) + "T00:00:00", timeZone: CAL_TZ },
+      });
+    }
+  }
+
   for (const h of holidays) {
     events.push({
       uid: prefix + "holiday-" + h.date,
