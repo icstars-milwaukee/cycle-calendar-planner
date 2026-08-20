@@ -253,20 +253,22 @@ function toEvents(plan, room) {
       // so the calendar received a single event per week instead of the whole day.
       const blockId = p.uid || p.id;
       if (!blockId) continue;
+      // Per-event choice wins; the day rule is only the default. undefined follows
+      // the rule (virtual on Wed/Fri from week 3, never on a skeleton-free week);
+      // true forces a Teams link anywhere; false forces in person anywhere.
+      const isVirtual = p.virtual === true ? true : p.virtual === false ? false :
+        (w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0 && !skipHolds.has(w + 1));
       events.push({
         uid: prefix + blockId + "-w" + (w + 1),
-        subject: p.title,
+        // The mode rides in the name, where interns actually read it.
+        subject: p.title + (isVirtual ? " [Virtual]" : " [In Person]"),
         category: catName(p.cat || (p.refId ? (plan.custom || []).find((c) => c.id === p.refId) || {} : {}).cat),
         start: { dateTime: date + "T" + hhmm(p.start), timeZone: CAL_TZ },
         end: { dateTime: date + "T" + hhmm(p.start + p.mins), timeZone: CAL_TZ },
         week: w + 1,
         day: p.day,
         minutes: p.mins,
-        // Per-event choice wins; the day rule is only the default. undefined follows
-        // the rule (virtual on Wed/Fri from week 3, never on a skeleton-free week);
-        // true forces a Teams link anywhere; false forces in person anywhere.
-        teams: p.virtual === true ? true : p.virtual === false ? false :
-          (w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0 && !skipHolds.has(w + 1)),
+        teams: isVirtual,
         notes: typeof p.notes === "string" ? p.notes.slice(0, 4000) : "",
         // Facilitators become real attendees, which is what puts the session on their
         // own calendar. Inherited from the shelf card when the block carries none.
@@ -319,10 +321,14 @@ function toEvents(plan, room) {
           // updates its events in place rather than duplicating.
           const anchor = (!h.id || /^h\d$/.test(h.id)) ? slug(h.title) : h.id;
           const titleOv = holdTitles[(h.id || slug(h.title)) + ":" + (w + 1) + ":" + d];
+          const holdName = (typeof titleOv === "string" && titleOv.trim())
+            ? titleOv.trim().slice(0, 120) : h.title;
+          // Holds follow the day's mode - on a virtual day the rituals are
+          // virtual too, and the name says so like every other event.
+          const dayVirtual = (w + 1) >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(d) >= 0 && !skipHolds.has(w + 1);
           events.push({
             uid: prefix + "hold-" + anchor + "-w" + (w + 1) + "-d" + d,
-            subject: (typeof titleOv === "string" && titleOv.trim())
-              ? titleOv.trim().slice(0, 120) : h.title,
+            subject: holdName + (dayVirtual ? " [Virtual]" : " [In Person]"),
             category: "Fixed hold",
             start: { dateTime: date + "T" + hhmm(h.start), timeZone: CAL_TZ },
             end: { dateTime: date + "T" + hhmm(h.end), timeZone: CAL_TZ },
