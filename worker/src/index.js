@@ -269,7 +269,14 @@ function toEvents(plan, room) {
         day: p.day,
         minutes: p.mins,
         teams: isVirtual,
-        notes: typeof p.notes === "string" ? p.notes.slice(0, 4000) : "",
+        // Earlier pulls wrote a duplicate "Workshop Title · CODE · 90 min"
+        // line under the heading; the title carries that now, so it is
+        // stripped on the way out (never the first line - the real heading).
+        notes: (typeof p.notes === "string" ? p.notes : "").split("\n").filter((l, i) => {
+          if (i === 0 || !p.code) return true;
+          const t = l.trim();
+          return !(t.includes(" · " + p.code) && (t.endsWith(p.code) || /min\s*$/i.test(t)));
+        }).join("\n").replace(/\n{3,}/g, "\n\n").slice(0, 4000),
         // Facilitators become real attendees, which is what puts the session on their
         // own calendar. Inherited from the shelf card when the block carries none.
         who: assignedTo(p, plan),
