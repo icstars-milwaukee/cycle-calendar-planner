@@ -206,6 +206,19 @@ function assignedTo(p, plan) {
   return out;
 }
 
+// A facilitator's display name: the board's directory entry when one exists,
+// otherwise dressed up from the email's local part (jane.doe -> Jane Doe).
+function facName(plan, email) {
+  const f = (Array.isArray(plan.facDir) ? plan.facDir : [])
+    .find((x) => x && String(x.email || "").toLowerCase() === String(email).toLowerCase());
+  const named = f ? ((f.first || "") + " " + (f.last || "")).trim() : "";
+  if (named) return named;
+  const local = String(email).split("@")[0];
+  return local.indexOf(".") > 0
+    ? local.split(".").map((s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s)).join(" ")
+    : local;
+}
+
 function toEvents(plan, room) {
   if (!plan) return { ok: true, weekOf: null, events: [] };
   if (!plan.weekOf) {
@@ -258,10 +271,14 @@ function toEvents(plan, room) {
       // true forces a Teams link anywhere; false forces in person anywhere.
       const isVirtual = p.virtual === true ? true : p.virtual === false ? false :
         (w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0 && !skipHolds.has(w + 1));
+      const who = assignedTo(p, plan);
+      const whoNames = who.map((e) => facName(plan, e));
       events.push({
         uid: prefix + blockId + "-w" + (w + 1),
-        // The mode rides in the name, where interns actually read it.
-        subject: p.title + (isVirtual ? " [Virtual]" : " [In Person]"),
+        // Who's running it and how ride in the name, where interns actually
+        // read them: "Workshop Title by Jane Doe [Virtual]".
+        subject: p.title + (whoNames.length ? " by " + whoNames.join(" & ") : "") +
+          (isVirtual ? " [Virtual]" : " [In Person]"),
         category: catName(p.cat || (p.refId ? (plan.custom || []).find((c) => c.id === p.refId) || {} : {}).cat),
         start: { dateTime: date + "T" + hhmm(p.start), timeZone: CAL_TZ },
         end: { dateTime: date + "T" + hhmm(p.start + p.mins), timeZone: CAL_TZ },
@@ -279,7 +296,8 @@ function toEvents(plan, room) {
         }).join("\n").replace(/\n{3,}/g, "\n\n").slice(0, 4000),
         // Facilitators become real attendees, which is what puts the session on their
         // own calendar. Inherited from the shelf card when the block carries none.
-        who: assignedTo(p, plan),
+        who,
+        whoNames,
         // Curriculum code, if this workshop has been mapped to one.
         code: typeof p.code === "string" ? p.code.slice(0, 16) : "",
       });
@@ -475,8 +493,8 @@ function graphBody(ev) {
     // Assigned facilitators are invited, which is what puts the session on their own
     // calendar. Graph sends the invitation from the group mailbox on create, and on
     // update to anyone newly added.
-    attendees: (ev.who || []).map((a) => ({
-      emailAddress: { address: a, name: a.split("@")[0] },
+    attendees: (ev.who || []).map((a, i) => ({
+      emailAddress: { address: a, name: (ev.whoNames || [])[i] || a.split("@")[0] },
       type: "required",
     })),
     // Graph uses transactionId to make event creation idempotent: re-POSTing the same
