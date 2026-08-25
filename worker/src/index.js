@@ -643,9 +643,16 @@ function reconcile(publishedPlan, room, existingRaw) {
     const uid = uidOfExisting(ev, marker);
     if (!uid) {
       foreign++;   // not ours -- never touched
-      if (foreignSamples.length < 40) {
-        foreignSamples.push({ subject: String(ev.subject || "").slice(0, 80),
-          start: String((ev.start && ev.start.dateTime) || "").slice(0, 16) });
+      // Enough of each foreign event for the planner to draw it on the grid:
+      // an invitation to the group ("High Tea") should be visible where the
+      // team plans, so nobody schedules a workshop on top of it unknowingly.
+      if (foreignSamples.length < 60) {
+        foreignSamples.push({
+          subject: String(ev.subject || "").slice(0, 80),
+          start: String((ev.start && ev.start.dateTime) || "").slice(0, 16),
+          end: String((ev.end && ev.end.dateTime) || "").slice(0, 16),
+          allDay: ev.isAllDay === true,
+        });
       }
       continue;
     }
@@ -905,7 +912,7 @@ export default {
     // /room/<name>        -> WebSocket upgrade for live editing
     // /room/<name>/plan   -> plain GET snapshot, handy for debugging and backups
     const match = url.pathname.match(
-      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe|\/ids|\/log|\/tamper-test|\/backups|\/restore-backup)?$/);
+      /^\/room\/([A-Za-z0-9_-]{1,64})(\/plan|\/events|\/sync-plan|\/sync-ack|\/init|\/reset-tracking|\/purge-info|\/reconcile|\/check|\/wipe|\/ids|\/log|\/tamper-test|\/backups|\/restore-backup|\/foreign)?$/);
     if (!match) return new Response("Not found", { status: 404, headers: cors });
 
     // Every route that touches board data is gated, including the upgrade itself,
@@ -1428,6 +1435,19 @@ export class Board {
       return new Response(JSON.stringify(result), {
         headers: { ...cors, "Content-Type": "application/json" },
       });
+    }
+
+    // Events on the group calendar that did NOT come from this planner -- other
+    // people's invitations to the group, captured at the last reconcile. Read-only:
+    // the planner draws them so overlaps are seen, never touches them.
+    if (url.pathname.endsWith("/foreign")) {
+      const last = (await this.ctx.storage.get("lastReconcile")) || null;
+      return new Response(JSON.stringify({
+        ok: true,
+        at: last ? last.at : null,
+        foreign: last ? last.foreign || 0 : 0,
+        samples: last ? last.foreignSamples || [] : [],
+      }), { headers: { ...cors, "Content-Type": "application/json" } });
     }
 
     if (url.pathname.endsWith("/sync-plan")) {
