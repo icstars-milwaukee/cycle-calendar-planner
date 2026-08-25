@@ -647,11 +647,19 @@ function reconcile(publishedPlan, room, existingRaw) {
       // an invitation to the group ("High Tea") should be visible where the
       // team plans, so nobody schedules a workshop on top of it unknowingly.
       if (foreignSamples.length < 60) {
+        // Whatever informative fields the flow's listing happens to carry ride
+        // along -- organizer, location, a body preview, the Outlook link. All
+        // optional: an older flow that sends none of them still works.
+        const org = ev.organizer && ev.organizer.emailAddress;
         foreignSamples.push({
           subject: String(ev.subject || "").slice(0, 80),
           start: String((ev.start && ev.start.dateTime) || "").slice(0, 16),
           end: String((ev.end && ev.end.dateTime) || "").slice(0, 16),
           allDay: ev.isAllDay === true,
+          organizer: org ? String(org.name || org.address || "").slice(0, 60) : "",
+          location: String((ev.location && ev.location.displayName) || "").slice(0, 80),
+          preview: String(ev.bodyPreview || "").slice(0, 200),
+          web: /^https:\/\/outlook\./.test(String(ev.webLink || "")) ? String(ev.webLink).slice(0, 500) : "",
         });
       }
       continue;
