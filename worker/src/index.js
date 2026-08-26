@@ -273,11 +273,20 @@ function toEvents(plan, room) {
         (w + 1 >= TEAMS_FROM_WEEK && VIRTUAL_DAYS.indexOf(p.day) >= 0 && !skipHolds.has(w + 1));
       const who = assignedTo(p, plan);
       const whoNames = who.map((e) => facName(plan, e));
+      // A facilitator's name typed into the title by hand ("Workshop | Carl
+      // Lewis") would double up with the "by Carl Lewis" suffix -- the typed
+      // copy is dropped so the name appears exactly once.
+      let cleanTitle = p.title;
+      for (const n of whoNames) {
+        if (!n) continue;
+        const escaped = n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        cleanTitle = cleanTitle.replace(new RegExp("\\s*[|\u00b7-]\\s*" + escaped + "\\s*$", "i"), "");
+      }
       events.push({
         uid: prefix + blockId + "-w" + (w + 1),
         // Who's running it and how ride in the name, where interns actually
         // read them: "Workshop Title by Jane Doe [Virtual]".
-        subject: p.title + (whoNames.length ? " by " + whoNames.join(" & ") : "") +
+        subject: cleanTitle + (whoNames.length ? " by " + whoNames.join(" & ") : "") +
           (isVirtual ? " [Virtual]" : " [In Person]"),
         category: catName(p.cat || (p.refId ? (plan.custom || []).find((c) => c.id === p.refId) || {} : {}).cat),
         start: { dateTime: date + "T" + hhmm(p.start), timeZone: CAL_TZ },
