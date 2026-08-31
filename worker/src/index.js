@@ -219,6 +219,16 @@ function facName(plan, email) {
     : local;
 }
 
+// Curriculum codes are staff shorthand. They organise the planner, but on the
+// calendar interns read, "· T3B" is jargon with nothing behind it -- so the
+// trailing code comes off the title and off the details heading. The code still
+// travels on the event itself, where the reconciler fingerprints it.
+function stripCode(s, code) {
+  if (!s || !code) return s;
+  const esc = String(code).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(new RegExp("\\s*\u00b7\\s*" + esc + "(?=[ \\t]*$)", "gm"), "");
+}
+
 function toEvents(plan, room) {
   if (!plan) return { ok: true, weekOf: null, events: [] };
   if (!plan.weekOf) {
@@ -276,7 +286,7 @@ function toEvents(plan, room) {
       // A facilitator's name typed into the title by hand ("Workshop | Carl
       // Lewis") would double up with the "by Carl Lewis" suffix -- the typed
       // copy is dropped so the name appears exactly once.
-      let cleanTitle = p.title;
+      let cleanTitle = stripCode(p.title, p.code);
       for (const n of whoNames) {
         if (!n) continue;
         const escaped = n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -298,11 +308,11 @@ function toEvents(plan, room) {
         // Earlier pulls wrote a duplicate "Workshop Title · CODE · 90 min"
         // line under the heading; the title carries that now, so it is
         // stripped on the way out (never the first line - the real heading).
-        notes: (typeof p.notes === "string" ? p.notes : "").split("\n").filter((l, i) => {
+        notes: stripCode((typeof p.notes === "string" ? p.notes : "").split("\n").filter((l, i) => {
           if (i === 0 || !p.code) return true;
           const t = l.trim();
           return !(t.includes(" · " + p.code) && (t.endsWith(p.code) || /min\s*$/i.test(t)));
-        }).join("\n").replace(/\n{3,}/g, "\n\n").slice(0, 4000),
+        }).join("\n"), p.code).replace(/\n{3,}/g, "\n\n").slice(0, 4000),
         // Facilitators become real attendees, which is what puts the session on their
         // own calendar. Inherited from the shelf card when the block carries none.
         who,
@@ -517,12 +527,14 @@ function graphBody(ev) {
       // of the details so the reconciler can tell when they changed on the board and
       // update the event body in place -- comparing full bodies is unreliable because
       // Outlook rewrites them.
+      // The curriculum code and the "do not edit here" warning are both gone from
+      // the body: one is staff shorthand, the other is a rule aimed at staff, and
+      // interns read this. The ref/nh/as lines below are machinery, not copy --
+      // they are what makes a re-sync an update instead of a duplicate.
       content: (ev.notes ? ev.notes + "\n\n----\n" : "") +
         "Cycle Calendar Planner" + (ev.category ? " - " + ev.category : "") +
         (ev.week ? "\nWeek " + ev.week + " of " + CYCLE_WEEKS : "") +
-        (ev.code ? "\nCurriculum: " + ev.code : "") +
         ((ev.who || []).length ? "\nFacilitator: " + ev.who.join(", ") : "") +
-        "\nDo not edit here; edit the planner and it will be overwritten on the next sync." +
         "\nref: " + ev.uid +
         "\nnh: " + notesHash(ev.notes || "") +
         // Fingerprint for the fields the flow's calendarView listing does not return
