@@ -223,10 +223,16 @@ function facName(plan, email) {
 // calendar interns read, "· T3B" is jargon with nothing behind it -- so the
 // trailing code comes off the title and off the details heading. The code still
 // travels on the event itself, where the reconciler fingerprints it.
+// Only the block's OWN code is stripped, and only where it trails a title --
+// end of line, or in front of the "by <facilitator>" the details heading adds.
+// A code quoted mid-sentence ("T3B teaches branch->PR->merge this week") is
+// somebody explaining something, and it stays. The separator is optional
+// because some titles carry the code on a plain space rather than a middot.
 function stripCode(s, code) {
   if (!s || !code) return s;
   const esc = String(code).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return s.replace(new RegExp("\\s*\u00b7\\s*" + esc + "(?=[ \\t]*$)", "gm"), "");
+  return s.replace(
+    new RegExp("[ \\t]*(?:\u00b7|\\||-)?[ \\t]*" + esc + "(?=[ \\t]*(?:$|by[ \\t]))", "gm"), "");
 }
 
 function toEvents(plan, room) {
