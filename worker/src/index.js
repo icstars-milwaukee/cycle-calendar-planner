@@ -744,7 +744,15 @@ function reconcile(publishedPlan, room, existingRaw) {
       const body = graphBody(ev);
       delete body.isOnlineMeeting;
       delete body.onlineMeetingProvider;
-      update.push({ uid, eventId: keep.id, event: body });
+      const why = [
+        sameSubject ? null : "subject",
+        sameStart ? null : "start",
+        sameEnd ? null : "end",
+        sameCat ? null : "category",
+        sameNotes ? null : "details",
+        sameWho ? null : "facilitator/code",
+      ].filter(Boolean).join("+");
+      update.push({ uid, eventId: keep.id, event: body, why });
     }
   }
 
@@ -1417,6 +1425,42 @@ export class Board {
       const published = (await this.ctx.storage.get("published")) || null;
       const result = reconcile(published, room, body.events || body.value || []);
 
+      // A convergence brake.
+      //
+      // An update is a promise that the calendar will then match. When the same
+      // event comes back needing the same change run after run, that promise is not
+      // being kept -- and repeating it cannot help, because nothing about the ask has
+      // changed. What it does do is mail every facilitator on that event, every time.
+      // Sixty-four events churned this way for days.
+      //
+      // So an identical ask is allowed a few attempts and then held back, and the
+      // count is reported. Anything genuinely new still goes out on the first try;
+      // only a repeat that is demonstrably not landing is muted.
+      const TRIES_BEFORE_HOLDING = 3;
+      const attempts = (await this.ctx.storage.get("pushAttempts")) || {};
+      const held = [];
+      if (Array.isArray(result.update) && result.update.length) {
+        const kept = [];
+        for (const u of result.update) {
+          const ev = u.event || {};
+          const sig = [ev.subject, ev.start && ev.start.dateTime, ev.end && ev.end.dateTime,
+            (ev.categories || [])[0] || ""].join("|");
+          const seenBefore = attempts[u.uid];
+          const tries = seenBefore && seenBefore.sig === sig ? seenBefore.n + 1 : 1;
+          attempts[u.uid] = { sig, n: tries, at: new Date().toISOString() };
+          if (tries > TRIES_BEFORE_HOLDING) held.push({ uid: u.uid, tries, why: u.why || null });
+          else kept.push(u);
+        }
+        result.update = kept;
+        result.changes = (result.create || []).length + kept.length + (result.delete || []).length;
+      }
+      // Forget events nobody is asking about any more, so the record cannot grow
+      // without bound and a fixed event starts from a clean slate.
+      const asked = new Set((result.update || []).map((u) => u.uid).concat(held.map((h) => h.uid)));
+      for (const k of Object.keys(attempts)) if (!asked.has(k)) delete attempts[k];
+      await this.ctx.storage.put("pushAttempts", attempts);
+      if (held.length) result.heldBack = held.slice(0, 40);
+
       // An armed guard drill: inject the deletion of one wanted event into this run's
       // plan, then disarm immediately so it can never fire twice.
       const tamper = await this.ctx.storage.get("tamperOnce");
@@ -1440,6 +1484,7 @@ export class Board {
         update: (result.update || []).length,
         delete: (result.delete || []).length,
         changes: result.changes || 0,
+        held: held.length || undefined,
         tracked: Object.keys(result.known || {}).length,
         foreignSamples: result.foreignSamples || [],
       });
@@ -1454,6 +1499,7 @@ export class Board {
         op: mark,
         s: String((x.event && x.event.subject) || x.uid || "").slice(0, 60),
         d: String((x.event && x.event.start && x.event.start.dateTime) || "").slice(0, 16),
+        w: x.why || undefined,
       });
       const ops = []
         .concat((result.create || []).slice(0, 8).map(opLine("+")))
