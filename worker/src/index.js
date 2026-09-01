@@ -721,17 +721,23 @@ function reconcile(publishedPlan, room, existingRaw) {
     // uncategorized and rewrite the entire calendar on every run.
     const sameCat = keep.categories === undefined ||
       ((keep.categories || [])[0] || "") === (ev.category || "");
-    // Details drift: compare the fingerprint stamped into the body against what the
-    // board wants now. An event with no fingerprint (created before notes existed)
-    // only updates once someone actually writes details for it.
+    // Details drift, and reassignment or a curriculum remap, are read from
+    // fingerprints stamped into the event body.
+    //
+    // The flow returns Graph's bodyPreview, which stops around 255 characters, so
+    // on any event carrying real content these lines sit past the cutoff and are
+    // simply absent. Absent has to mean "cannot tell": reading it as "carries
+    // nothing" told the reconciler that every coded event had lost its code, and it
+    // rewrote all sixty-four of them every quarter of an hour, for days -- and every
+    // rewrite is an "Updated:" mail to that event's facilitators.
+    //
+    // Subject, time and category still catch real drift here. For detail drift too,
+    // have the flow select body rather than bodyPreview.
     const bodyText = String((keep.body && keep.body.content) || keep.bodyPreview || "");
-    const foundNh = (/nh:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || notesHash("");
-    const sameNotes = foundNh === notesHash(ev.notes || "");
-    // Reassignment or a curriculum remap: same fingerprint trick. An event stamped
-    // before either existed carries no as: line and reads as unassigned and unmapped,
-    // so it only updates once someone actually assigns or maps it.
-    const foundAs = (/as:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || extrasHash({});
-    const sameWho = foundAs === extrasHash(ev);
+    const foundNh = (/nh:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || null;
+    const sameNotes = foundNh === null || foundNh === notesHash(ev.notes || "");
+    const foundAs = (/as:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || null;
+    const sameWho = foundAs === null || foundAs === extrasHash(ev);
     if (!sameSubject || !sameStart || !sameEnd || !sameCat || !sameNotes || !sameWho) {
       // Online-meeting fields are creation-only in Graph; patching them onto an
       // existing event can fail the whole update, so they stay out of PATCH bodies.
