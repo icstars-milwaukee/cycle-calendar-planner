@@ -1435,8 +1435,9 @@ export class Board {
       //
       // So an identical ask is allowed a few attempts and then held back, and the
       // count is reported. Anything genuinely new still goes out on the first try;
-      // only a repeat that is demonstrably not landing is muted.
-      const TRIES_BEFORE_HOLDING = 3;
+      // only a repeat that is demonstrably not landing is muted. Held events are
+      // reported back and logged, so nothing goes quiet without saying so.
+      const TRIES_BEFORE_HOLDING = 2;
       const attempts = (await this.ctx.storage.get("pushAttempts")) || {};
       const held = [];
       if (Array.isArray(result.update) && result.update.length) {
