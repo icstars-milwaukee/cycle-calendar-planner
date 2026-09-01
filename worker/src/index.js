@@ -632,7 +632,7 @@ function uidOfExisting(ev, marker) {
   return null;
 }
 
-function reconcile(publishedPlan, room, existingRaw) {
+function reconcile(publishedPlan, room, existingRaw, extrasMem = {}) {
   if (!publishedPlan) {
     return { ok: false, error: "Nothing has been published yet.", create: [], update: [], delete: [] };
   }
@@ -704,7 +704,7 @@ function reconcile(publishedPlan, room, existingRaw) {
   for (const [uid, ev] of desired) {
     const matches = seen.get(uid);
     if (!matches || !matches.length) {
-      create.push({ uid, event: graphBody(ev) });
+      create.push({ uid, event: graphBody(ev), mem: { nh: notesHash(ev.notes || ""), as: extrasHash(ev) } });
       continue;
     }
     // Keep the first, drop any duplicates of it.
@@ -722,22 +722,26 @@ function reconcile(publishedPlan, room, existingRaw) {
     const sameCat = keep.categories === undefined ||
       ((keep.categories || [])[0] || "") === (ev.category || "");
     // Details drift, and reassignment or a curriculum remap, are read from
-    // fingerprints stamped into the event body.
+    // fingerprints stamped into the event body -- when they are visible. The flow
+    // returns Graph's bodyPreview, which stops near 255 characters, so on events
+    // with real content the nh:/as: lines sit past the cutoff.
     //
-    // The flow returns Graph's bodyPreview, which stops around 255 characters, so
-    // on any event carrying real content these lines sit past the cutoff and are
-    // simply absent. Absent has to mean "cannot tell": reading it as "carries
-    // nothing" told the reconciler that every coded event had lost its code, and it
-    // rewrote all sixty-four of them every quarter of an hour, for days -- and every
-    // rewrite is an "Updated:" mail to that event's facilitators.
-    //
-    // Subject, time and category still catch real drift here. For detail drift too,
-    // have the flow select body rather than bodyPreview.
+    // An invisible fingerprint is not "carries nothing" (that rewrote 64 events
+    // every quarter hour, mailing their facilitators each time), and it is not
+    // "skip the check" either (that made detail edits invisible: publish a notes
+    // change and the calendar never heard about it). It means: fall back to what
+    // this worker last INSTRUCTED for the event. A board edit differs from that
+    // memory, ships once, updates the memory, and is converged.
     const bodyText = String((keep.body && keep.body.content) || keep.bodyPreview || "");
-    const foundNh = (/nh:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || null;
-    const sameNotes = foundNh === null || foundNh === notesHash(ev.notes || "");
-    const foundAs = (/as:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || null;
-    const sameWho = foundAs === null || foundAs === extrasHash(ev);
+    const wantedNh = notesHash(ev.notes || "");
+    const wantedAs = extrasHash(ev);
+    const mem = extrasMem[uid] || {};
+    const visNh = (/nh:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || null;
+    const visAs = (/as:\s*([a-z0-9]+)/.exec(bodyText) || [])[1] || null;
+    const effNh = visNh !== null ? visNh : (mem.nh || null);
+    const effAs = visAs !== null ? visAs : (mem.as || null);
+    const sameNotes = effNh === null || effNh === wantedNh;
+    const sameWho = effAs === null || effAs === wantedAs;
     if (!sameSubject || !sameStart || !sameEnd || !sameCat || !sameNotes || !sameWho) {
       // Online-meeting fields are creation-only in Graph; patching them onto an
       // existing event can fail the whole update, so they stay out of PATCH bodies.
@@ -752,7 +756,7 @@ function reconcile(publishedPlan, room, existingRaw) {
         sameNotes ? null : "details",
         sameWho ? null : "facilitator/code",
       ].filter(Boolean).join("+");
-      update.push({ uid, eventId: keep.id, event: body, why });
+      update.push({ uid, eventId: keep.id, event: body, why, mem: { nh: wantedNh, as: wantedAs } });
     }
   }
 
@@ -1423,31 +1427,38 @@ export class Board {
         });
       }
       const published = (await this.ctx.storage.get("published")) || null;
-      const result = reconcile(published, room, body.events || body.value || []);
+      const extrasMem = (await this.ctx.storage.get("extrasMem")) || {};
+      const result = reconcile(published, room, body.events || body.value || [], extrasMem);
 
       // A convergence brake.
       //
-      // An update is a promise that the calendar will then match. When the same
-      // event comes back needing the same change run after run, that promise is not
-      // being kept -- and repeating it cannot help, because nothing about the ask has
-      // changed. What it does do is mail every facilitator on that event, every time.
-      // Sixty-four events churned this way for days.
+      // An update is a promise that the calendar will then match. When the
+      // byte-identical ask returns run after run, repeating it cannot help -- it
+      // only mails that event's facilitators again. So an identical ask ships
+      // twice at most and is then held back, and the held count is logged.
       //
-      // So an identical ask is allowed a few attempts and then held back, and the
-      // count is reported. Anything genuinely new still goes out on the first try;
-      // only a repeat that is demonstrably not landing is muted. Held events are
-      // reported back and logged, so nothing goes quiet without saying so.
+      // The signature covers everything an update can carry -- subject, times,
+      // category, and both detail fingerprints -- so ANY real edit on the board
+      // is a new signature and ships immediately. Records age out rather than
+      // being pruned by "asked this run": several callers interleave here, and a
+      // healthy zero-change run must not reset a stuck caller's count.
       const TRIES_BEFORE_HOLDING = 2;
+      const AGE_LIMIT_MS = 48 * 3600 * 1000;
       const attempts = (await this.ctx.storage.get("pushAttempts")) || {};
+      const nowMs = Date.now();
+      for (const k of Object.keys(attempts)) {
+        if (!(nowMs - Date.parse(attempts[k].at || 0) < AGE_LIMIT_MS)) delete attempts[k];
+      }
       const held = [];
       if (Array.isArray(result.update) && result.update.length) {
         const kept = [];
         for (const u of result.update) {
           const ev = u.event || {};
           const sig = [ev.subject, ev.start && ev.start.dateTime, ev.end && ev.end.dateTime,
-            (ev.categories || [])[0] || ""].join("|");
-          const seenBefore = attempts[u.uid];
-          const tries = seenBefore && seenBefore.sig === sig ? seenBefore.n + 1 : 1;
+            (ev.categories || [])[0] || "",
+            u.mem && u.mem.nh, u.mem && u.mem.as].join("|");
+          const prev = attempts[u.uid];
+          const tries = prev && prev.sig === sig ? prev.n + 1 : 1;
           attempts[u.uid] = { sig, n: tries, at: new Date().toISOString() };
           if (tries > TRIES_BEFORE_HOLDING) held.push({ uid: u.uid, tries, why: u.why || null });
           else kept.push(u);
@@ -1455,12 +1466,19 @@ export class Board {
         result.update = kept;
         result.changes = (result.create || []).length + kept.length + (result.delete || []).length;
       }
-      // Forget events nobody is asking about any more, so the record cannot grow
-      // without bound and a fixed event starts from a clean slate.
-      const asked = new Set((result.update || []).map((u) => u.uid).concat(held.map((h) => h.uid)));
-      for (const k of Object.keys(attempts)) if (!asked.has(k)) delete attempts[k];
       await this.ctx.storage.put("pushAttempts", attempts);
       if (held.length) result.heldBack = held.slice(0, 40);
+
+      // Remember what was just instructed, and strip the internal field before it
+      // reaches the flow. Held asks are not re-remembered -- their targets were
+      // already recorded when they first shipped.
+      for (const u of (result.update || []).concat(result.create || [])) {
+        if (u && u.mem) {
+          if (u.uid) extrasMem[u.uid] = u.mem;
+          delete u.mem;
+        }
+      }
+      await this.ctx.storage.put("extrasMem", extrasMem);
 
       // An armed guard drill: inject the deletion of one wanted event into this run's
       // plan, then disarm immediately so it can never fire twice.
